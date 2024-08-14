@@ -1,3 +1,4 @@
+use crate::tokens::{Token, TokenValue, Tokens};
 use crate::SqlStatement;
 
 pub(crate) struct Scanner<'s> {
@@ -12,7 +13,7 @@ pub(crate) struct Scanner<'s> {
     /// The current column of the scanner.
     column: usize,
 
-    /// The offset of the start of the current token.
+    /// The offset of the start of the token currently being scanned.
     token_start_offset: usize,
 }
 
@@ -66,10 +67,18 @@ impl<'s> Scanner<'s> {
     //
     // The token is captured from {{self.token_start_offset}} to the ending offset provided.
     // The ending offset is not included in the token.
-    fn capture_token(&mut self, tokens: &mut Vec<&'s str>, end_offset: usize, next_token_offset: usize) {
+    fn capture_token(&mut self, tokens: &mut Tokens<'s>, end_offset: usize, next_token_offset: usize) {
         if end_offset > self.token_start_offset {
-            let token = &self.input[self.token_start_offset..end_offset];
-            tokens.push(token);
+            let value = TokenValue::Value(&self.input[self.token_start_offset..end_offset]);
+            tokens.tokens.push(Token::new(
+                value,
+                self.token_start_offset,
+                end_offset,
+                self.line,
+                self.column,
+                self.line,
+                self.column,
+            ));
         }
         self.token_start_offset = next_token_offset;
     }
@@ -125,7 +134,7 @@ impl<'s> Scanner<'s> {
         &mut self,
         input_iter: &mut std::str::Chars,
         quote_char: char,
-        tokens: &mut Vec<&'s str>,
+        tokens: &mut Tokens<'s>,
     ) -> Option<char> {
         let mut next_char = self.get_next_char(input_iter);
         while let Some(c) = next_char {
@@ -194,7 +203,7 @@ impl<'s> Scanner<'s> {
             // an expression such as '1+1', etc. Because everything between parentheses is skipped by the scanner, they
             // are not included in the list of tokens. Same applies to comments and string literals and quoted
             // identifiers.
-            let mut tokens: Vec<&str> = Vec::new();
+            let mut tokens: Tokens = Tokens { tokens: Vec::new() };
 
             let mut next_char = self.get_next_char(input_iter);
             while let Some(c) = next_char {
@@ -334,7 +343,7 @@ impl<'s> Scanner<'s> {
         &mut self,
         input_iter: &mut std::str::Chars,
         delimiter: &str,
-        tokens: &mut Vec<&'s str>,
+        tokens: &mut Tokens<'s>,
     ) -> Option<char> {
         let delimiter_start_char = delimiter.chars().next().expect("delimiter must not be empty");
         let mut next_char = self.get_next_char(input_iter);

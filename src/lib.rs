@@ -3,6 +3,7 @@ use statement::SqlStatement;
 
 mod scanner;
 pub mod statement;
+pub mod tokens;
 
 /// A simple loose SQL parser that can split SQL statements from a script.
 ///

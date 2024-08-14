@@ -1,3 +1,5 @@
+use crate::tokens::Tokens;
+
 pub struct SqlStatement<'s> {
     // The SQL statement.
     pub(crate) sql: &'s str,
@@ -8,7 +10,7 @@ pub struct SqlStatement<'s> {
 
     // A list of tokens found in the statement at the top level.
     // Tokens found on CTEs or sub queries are not included in this list.
-    pub(crate) tokens: Vec<&'s str>,
+    pub(crate) tokens: Tokens<'s>,
 }
 
 impl SqlStatement<'_> {
@@ -27,7 +29,7 @@ impl SqlStatement<'_> {
         self.start_column
     }
 
-    pub fn tokens(&self) -> &[&str] {
+    pub fn tokens(&self) -> &Tokens<'_> {
         &self.tokens
     }
 
@@ -35,6 +37,7 @@ impl SqlStatement<'_> {
     /// Keywords found on CTEs or sub queries are not included in this list.
     pub fn keywords(&self) -> Vec<&str> {
         self.tokens
+            .as_str_array()
             .iter()
             .filter(|&&token| token.chars().all(|c| c.is_ascii_alphabetic()))
             .cloned() // Clone the &str references to return a Vec<&'s str>
