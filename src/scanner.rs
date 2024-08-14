@@ -67,9 +67,15 @@ impl<'s> Scanner<'s> {
     //
     // The token is captured from {{self.token_start_offset}} to the ending offset provided.
     // The ending offset is not included in the token.
-    fn capture_token(&mut self, tokens: &mut Tokens<'s>, end_offset: usize, next_token_offset: usize) {
+    fn capture_token<T: Into<TokenValue<'s>>>(
+        &mut self,
+        tokens: &mut Tokens<'s>,
+        end_offset: usize,
+        next_token_offset: usize,
+        value_constructor: impl Fn(&'s str) -> T,
+    ) {
         if end_offset > self.token_start_offset {
-            let value = TokenValue::Value(&self.input[self.token_start_offset..end_offset]);
+            let value = value_constructor(&self.input[self.token_start_offset..end_offset]).into();
             tokens.tokens.push(Token::new(
                 value,
                 self.token_start_offset,
@@ -86,7 +92,7 @@ impl<'s> Scanner<'s> {
     // Can be either `--` or `#`.
     // The `--` single-line comment is the most universally supported across different SQL dialects.
     // The `#`` single-line comment is less common and is primarily used in MySQL.
-    fn skip_single_line_comment(&mut self, input_iter: &mut std::str::Chars) {
+    fn capture_single_line_comment(&mut self, input_iter: &mut std::str::Chars, tokens: &mut Tokens<'s>) {
         while let Some(c) = self.get_next_char(input_iter) {
             if c == '\n' {
                 self.line += 1;
@@ -94,19 +100,35 @@ impl<'s> Scanner<'s> {
                 break;
             }
         }
-        self.token_start_offset = self.next_offset;
+        self.capture_token(tokens, self.offset(), self.next_offset, TokenValue::Comment);
     }
 
     // The /* ... */ multi-line comment is widely supported supported across different SQL dialects.
     // Despite most SQL dialects not supporting nested comments, PostgreSQL does...
     // See: https://www.postgresql.org/docs/current/sql-syntax-lexical.html#SQL-SYNTAX-COMMENTS
-    fn skip_multi_line_comment(&mut self, input_iter: &mut std::str::Chars) {
+    fn capture_multi_line_comment(&mut self, input_iter: &mut std::str::Chars, tokens: &mut Tokens<'s>) {
+        // The nested level of comments (starts at 1, and decreased by 1 when a `*/` is found).
+        let mut nested_level = 1;
         let mut next_char = self.get_next_char(input_iter);
         while let Some(c) = next_char {
             if c == '*' {
                 next_char = self.get_next_char(input_iter);
                 if next_char.as_ref() == Some(&'/') {
-                    break;
+                    nested_level -= 1;
+                    if nested_level == 0 {
+                        // We found the end of the comment.
+                        break;
+                    }
+                } else {
+                    // We need to go back immediately to the beginning of the loop to check if the next character we've
+                    // just read from the input.
+                    continue;
+                }
+            } else if c == '/' {
+                // We need to check if the next character is a `*` to determine if we're starting a nested comment.
+                next_char = self.get_next_char(input_iter);
+                if next_char.as_ref() == Some(&'*') {
+                    nested_level += 1;
                 } else {
                     // We need to go back immediately to the beginning of the loop to check if the next character we've
                     // just read from the input.
@@ -117,7 +139,7 @@ impl<'s> Scanner<'s> {
             }
             next_char = self.get_next_char(input_iter);
         }
-        self.token_start_offset = self.next_offset;
+        self.capture_token(tokens, self.next_offset, self.next_offset, TokenValue::Comment);
     }
 
     // Capture a quoted identifier or a string literal.
@@ -144,7 +166,7 @@ impl<'s> Scanner<'s> {
                 if next_char.as_ref() != Some(&quote_char) {
                     // We found the end of the quoted token.
                     // We return the next character to the scanner so it can be processed.
-                    self.capture_token(tokens, self.offset(), self.next_offset);
+                    self.capture_token(tokens, self.offset(), self.next_offset, TokenValue::Quoted);
                     return next_char;
                 }
             } else {
@@ -156,7 +178,7 @@ impl<'s> Scanner<'s> {
         }
         // We reached the end of the input without finding the end of the identifier, we still need to capture the last
         // token.
-        self.capture_token(tokens, self.next_offset, self.next_offset);
+        self.capture_token(tokens, self.next_offset, self.next_offset, TokenValue::Quoted);
         next_char
     }
 
@@ -211,35 +233,35 @@ impl<'s> Scanner<'s> {
                     //
                     // New Line.
                     //
-                    self.capture_token(&mut tokens, self.offset(), self.next_offset);
+                    self.capture_token(&mut tokens, self.offset(), self.next_offset, TokenValue::Any);
                     self.line += 1;
                     self.column = 1;
                 } else if c == '\r' {
                     //
                     // Carriage Return (ignored).
                     //
-                    self.capture_token(&mut tokens, self.offset(), self.next_offset);
+                    self.capture_token(&mut tokens, self.offset(), self.next_offset, TokenValue::Any);
                     self.column -= 1;
                 } else if c == ';' {
                     //
                     // Statement delimiter.
                     //
                     // We found the delimiter, it's the end of the statement.
-                    self.capture_token(&mut tokens, self.offset(), self.next_offset);
+                    self.capture_token(&mut tokens, self.offset(), self.next_offset, TokenValue::Any);
                     break;
                 } else if c.is_whitespace() {
                     //
                     // Whitespace (could be \s, \t, \r, \n, etc.).
                     //
-                    self.capture_token(&mut tokens, self.offset(), self.next_offset);
+                    self.capture_token(&mut tokens, self.offset(), self.next_offset, TokenValue::Any);
                 } else if c == '-' {
                     //
                     // Either a single-line comment '--' or a minus sign.
                     //
                     next_char = self.get_next_char(input_iter);
                     if next_char.as_ref() == Some(&'-') {
-                        self.capture_token(&mut tokens, self.offset() - 1, self.offset() - 1);
-                        self.skip_single_line_comment(input_iter);
+                        self.capture_token(&mut tokens, self.offset() - 1, self.offset() - 1, TokenValue::Comment);
+                        self.capture_single_line_comment(input_iter, &mut tokens);
                     } else {
                         continue;
                     }
@@ -247,16 +269,16 @@ impl<'s> Scanner<'s> {
                     //
                     // Single-line comment starting by '#' (MySQL).
                     //
-                    self.capture_token(&mut tokens, self.offset(), self.offset());
-                    self.skip_single_line_comment(input_iter);
+                    self.capture_token(&mut tokens, self.offset(), self.offset(), TokenValue::Comment);
+                    self.capture_single_line_comment(input_iter, &mut tokens);
                 } else if c == '/' {
                     //
                     // Either a multi-line comment '/* ... */' or a division operator.
                     //
                     next_char = self.get_next_char(input_iter);
                     if next_char.as_ref() == Some(&'*') {
-                        self.capture_token(&mut tokens, self.offset() - 1, self.offset() - 1);
-                        self.skip_multi_line_comment(input_iter);
+                        self.capture_token(&mut tokens, self.offset() - 1, self.offset() - 1, TokenValue::Comment);
+                        self.capture_multi_line_comment(input_iter, &mut tokens);
                     } else {
                         continue;
                     }
@@ -271,7 +293,7 @@ impl<'s> Scanner<'s> {
                     // May be dollar quoting (PostgreSQL).
                     //
                     // Before starting to identify the dollar-quoted delimiter we need to capture the current token.
-                    self.capture_token(&mut tokens, self.offset(), self.offset());
+                    self.capture_token(&mut tokens, self.offset(), self.offset(), TokenValue::Any);
 
                     // A dollar-quoted delimiter consists of a dollar sign ($), an optional “tag” of zero or more
                     // characters and another dollar sign.
@@ -299,14 +321,14 @@ impl<'s> Scanner<'s> {
                     // Any other character that is not an underscore or alphanumeric will be considered as a boundary
                     // for a token.
                     //
-                    self.capture_token(&mut tokens, self.offset(), self.next_offset);
+                    self.capture_token(&mut tokens, self.offset(), self.next_offset, TokenValue::Any);
                 }
                 next_char = self.get_next_char(input_iter);
             }
 
             if next_char.is_none() {
                 // We've reached the end of the input, we may have a last token to capture.
-                self.capture_token(&mut tokens, self.next_offset, self.next_offset);
+                self.capture_token(&mut tokens, self.next_offset, self.next_offset, TokenValue::Any);
             }
 
             // Before returning the statement we'll trim it to remove leading and trailing whitespaces & newlines.
@@ -354,7 +376,12 @@ impl<'s> Scanner<'s> {
                 let remaining_input = &self.input[self.offset()..];
                 if remaining_input.starts_with(delimiter) {
                     // We found the end of the delimited token.
-                    self.capture_token(tokens, self.offset() + delimiter.len(), self.offset() + delimiter.len());
+                    self.capture_token(
+                        tokens,
+                        self.offset() + delimiter.len(),
+                        self.offset() + delimiter.len(),
+                        TokenValue::Delimited,
+                    );
                     // We return the next character to the scanner so it can be processed.
                     self.skip(input_iter, delimiter.len() - 1);
                     return self.get_next_char(input_iter);

@@ -41,7 +41,10 @@ mod tests {
     #[test]
     fn test_capture_delimited_token() {
         let s: Vec<_> = loose_sqlparse("SELECT $$O'Reilly$$, $tag$with_tag$tag$, $x$__$__$x$ FROM t1").collect();
-        assert_eq!(s[0].tokens(), &["SELECT", "$$O'Reilly$$", "$tag$with_tag$tag$", "$x$__$__$x$", "FROM", "t1"]);
+        assert_eq!(
+            s[0].tokens().as_str_array(),
+            &["SELECT", "$$O'Reilly$$", "$tag$with_tag$tag$", "$x$__$__$x$", "FROM", "t1"]
+        );
     }
 
     #[test]
@@ -49,26 +52,26 @@ mod tests {
         let statements: Vec<_> = loose_sqlparse("SELECT '', '''' FROM t1").collect();
         assert_eq!(statements.len(), 1);
         assert_eq!(statements[0].sql, "SELECT '', '''' FROM t1");
-        assert_eq!(statements[0].tokens(), &["SELECT", "''", "''''", "FROM", "t1"]);
+        assert_eq!(statements[0].tokens().as_str_array(), &["SELECT", "''", "''''", "FROM", "t1"]);
 
         let statements: Vec<_> = loose_sqlparse("SELECT 'O''Reilly' FROM t1; SELECT 'O''Reilly FROM t2").collect();
         assert_eq!(statements.len(), 2);
         assert_eq!(statements[0].sql, "SELECT 'O''Reilly' FROM t1");
-        assert_eq!(statements[0].tokens(), &["SELECT", "'O''Reilly'", "FROM", "t1"]);
+        assert_eq!(statements[0].tokens().as_str_array(), &["SELECT", "'O''Reilly'", "FROM", "t1"]);
         assert_eq!(statements[1].sql, "SELECT 'O''Reilly FROM t2");
-        assert_eq!(statements[1].tokens(), &["SELECT", "'O''Reilly FROM t2"]);
+        assert_eq!(statements[1].tokens().as_str_array(), &["SELECT", "'O''Reilly FROM t2"]);
 
         let statements: Vec<_> = loose_sqlparse(r#"SELECT 1000 AS "ID ""X""" FROM test; SELECT 2"#).collect();
         assert_eq!(statements.len(), 2);
         assert_eq!(statements[0].sql, r#"SELECT 1000 AS "ID ""X""" FROM test"#);
-        assert_eq!(statements[0].tokens(), &["SELECT", "1000", "AS", r#""ID ""X""""#, "FROM", "test"]);
+        assert_eq!(statements[0].tokens().as_str_array(), &["SELECT", "1000", "AS", r#""ID ""X""""#, "FROM", "test"]);
         assert_eq!(statements[1].sql, "SELECT 2");
 
         // Should reach the end of the input without finding the end of the identifier
         let statements: Vec<_> = loose_sqlparse(r#"SELECT 1000 AS "ID ""X; SELECT 2"#).collect();
         assert_eq!(statements.len(), 1);
         assert_eq!(statements[0].sql, r#"SELECT 1000 AS "ID ""X; SELECT 2"#);
-        assert_eq!(statements[0].tokens(), &["SELECT", "1000", "AS", r#""ID ""X; SELECT 2"#]);
+        assert_eq!(statements[0].tokens().as_str_array(), &["SELECT", "1000", "AS", r#""ID ""X; SELECT 2"#]);
     }
 
     #[test]
@@ -85,25 +88,26 @@ mod tests {
         let statements: Vec<_> = loose_sqlparse("SELECT 2-1; -- This is a comment\nSELECT 2").collect();
         assert_eq!(statements.len(), 2);
         assert_eq!(statements[0].sql, "SELECT 2-1");
-        assert_eq!(statements[0].tokens(), &["SELECT", "2-1"]);
+        assert_eq!(statements[0].tokens().as_str_array(), &["SELECT", "2-1"]);
         assert_eq!(statements[1].sql, "-- This is a comment\nSELECT 2");
 
         let statements: Vec<_> = loose_sqlparse("SELECT 1; # This is a comment\nSELECT 2").collect();
         assert_eq!(statements.len(), 2);
         assert_eq!(statements[0].sql, "SELECT 1");
-        assert_eq!(statements[0].tokens(), &["SELECT", "1"]);
+        assert_eq!(statements[0].tokens().as_str_array(), &["SELECT", "1"]);
         assert_eq!(statements[1].sql, "# This is a comment\nSELECT 2");
+        assert_eq!(statements[1].tokens().as_str_array(), &["# This is a comment", "SELECT", "2"]);
     }
 
     #[test]
     fn test_multi_line_comments() {
         let statements: Vec<_> =
-            loose_sqlparse("SELECT /* comment */ 2/1;SELECT /** line1\n * line 2\n **/2").collect();
+            loose_sqlparse("SELECT /* /*nested*/comment */ 2/1;SELECT /** line1\n * line 2\n **/2").collect();
         assert_eq!(statements.len(), 2);
-        assert_eq!(statements[0].sql, "SELECT /* comment */ 2/1");
-        assert_eq!(statements[0].tokens(), &["SELECT", "2/1"]);
+        assert_eq!(statements[0].sql, "SELECT /* /*nested*/comment */ 2/1");
+        assert_eq!(statements[0].tokens().as_str_array(), &["SELECT", "/* /*nested*/comment */", "2/1"]);
         assert_eq!(statements[1].sql, "SELECT /** line1\n * line 2\n **/2");
-        assert_eq!(statements[1].tokens(), &["SELECT", "2"]);
+        assert_eq!(statements[1].tokens().as_str_array(), &["SELECT", "/** line1\n * line 2\n **/", "2"]);
     }
 
     #[test]

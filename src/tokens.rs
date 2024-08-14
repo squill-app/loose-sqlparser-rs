@@ -1,8 +1,9 @@
-use std::cmp::PartialEq;
-
 #[derive(Debug)]
 pub enum TokenValue<'s> {
-    Value(&'s str),
+    Any(&'s str),
+    Comment(&'s str),
+    Quoted(&'s str),
+    Delimited(&'s str),
     Fragment(Vec<Token<'s>>),
 }
 
@@ -32,7 +33,10 @@ impl<'s> Token<'s> {
 
     pub fn as_str_array(&self) -> Vec<&str> {
         match &self.value {
-            TokenValue::Value(value) => vec![value],
+            TokenValue::Any(value) => vec![value],
+            TokenValue::Comment(value) => vec![value],
+            TokenValue::Quoted(value) => vec![value],
+            TokenValue::Delimited(value) => vec![value],
             TokenValue::Fragment(tokens) => tokens.iter().flat_map(|t| t.as_str_array()).collect(),
         }
     }
@@ -46,12 +50,5 @@ pub struct Tokens<'s> {
 impl<'s> Tokens<'s> {
     pub fn as_str_array(&self) -> Vec<&str> {
         self.tokens.iter().flat_map(|t| t.as_str_array()).collect()
-    }
-}
-
-impl<'s, const N: usize> PartialEq<[&str; N]> for Tokens<'s> {
-    fn eq(&self, other: &[&str; N]) -> bool {
-        let self_str_array = self.as_str_array();
-        self_str_array == other.to_vec()
     }
 }
