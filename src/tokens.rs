@@ -8,6 +8,14 @@ pub enum TokenValue<'s> {
     Quoted(&'s str),
     Delimited(&'s str),
 
+    /// An operator
+    ///
+    /// Arithmetic operators: `+`, `-`, `*`, `/`, `=`, `!=`, `>`, `<`, `>=`, `<=`, `<>`, `||`, `!`, `%`
+    /// Bitwise operators: `~`, `&`, `|`, `<<`, `>>`, `^`
+    /// PostgreSQL typecast operator: `::`
+    /// Regular expression operators: `~`, `~*`, `!~`, `!~*`
+    Operator(&'s str),
+
     /// A statement delimiter such as `;`.
     StatementDelimiter(&'s str),
 
@@ -63,6 +71,31 @@ impl<'s> Token<'s> {
         matches!(self.value, TokenValue::StatementDelimiter(_))
     }
 
+    pub fn is_operator(&self) -> bool {
+        matches!(self.value, TokenValue::Operator(_))
+    }
+
+    pub fn is_parenthesis(&self) -> bool {
+        match &self.value {
+            TokenValue::Any(value) => value == &"(" || value == &")",
+            _ => false,
+        }
+    }
+
+    pub fn is_comma(&self) -> bool {
+        match &self.value {
+            TokenValue::Any(value) => value == &",",
+            _ => false,
+        }
+    }
+
+    pub fn children(&self) -> Option<&Tokens<'s>> {
+        match &self.value {
+            TokenValue::Fragment(tokens) => Some(tokens),
+            _ => None,
+        }
+    }
+
     pub fn as_str_array(&self) -> Vec<&str> {
         match &self.value {
             TokenValue::Any(value) => vec![value],
@@ -70,6 +103,7 @@ impl<'s> Token<'s> {
             TokenValue::Quoted(value) => vec![value],
             TokenValue::Delimited(value) => vec![value],
             TokenValue::StatementDelimiter(value) => vec![value],
+            TokenValue::Operator(value) => vec![value],
             TokenValue::Fragment(tokens) => tokens.tokens.iter().flat_map(|t| t.as_str_array()).collect(),
         }
     }

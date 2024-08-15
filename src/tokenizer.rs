@@ -1,6 +1,13 @@
 use crate::tokens::{Token, TokenValue, Tokens};
 use crate::SqlStatement;
 
+// The list of all operators supported by the tokenizer.
+// The tokenizer will try to match the longest operator possible, so that list must be sorted by the length descending.
+const OPERATORS: [&str; 24] = [
+    "!~*", "!=", ">=", "<=", "<>", "||", "<<", ">>", "::", "~*", "!~", "+", "-", "*", "/", "=", ">", "<", "!", "%",
+    "~", "&", "|", "^",
+];
+
 pub(crate) struct Tokenizer<'s> {
     input: &'s str,
 
@@ -44,6 +51,12 @@ impl<'s> Tokenizer<'s> {
     #[inline]
     fn offset(&self) -> usize {
         self.next_offset - 1
+    }
+
+    // The remaining input to be processed by the tokenizer, including the current character.
+    #[inline]
+    fn remaining_input(&self) -> &str {
+        &self.input[self.offset()..]
     }
 
     // Handle the CRLF (Carriage Return + Line Feed) sequence.
@@ -214,8 +227,7 @@ impl<'s> Tokenizer<'s> {
     // Check if the input at the current position starts with the given delimiter (case-sensitive).
     #[inline]
     fn check_delimiter(&self, delimiter: &str) -> bool {
-        let remaining_input = &self.input[self.offset()..];
-        remaining_input.starts_with(delimiter)
+        self.remaining_input().starts_with(delimiter)
     }
 
     // Skip n characters from the iterator.
@@ -266,34 +278,19 @@ impl<'s> Tokenizer<'s> {
                 // Whitespace (could be \s, \t, \r, \n, etc.).
                 //
                 self.capture_token(tokens, self.offset(), self.next_offset, TokenValue::Any);
-            } else if c == '-' {
-                //
-                // Either a single-line comment '--' or a minus sign.
-                //
-                next_char = self.get_next_char(input_iter);
-                if next_char.as_ref() == Some(&'-') {
-                    self.capture_token(tokens, self.offset() - 1, self.offset() - 1, TokenValue::Comment);
-                    self.capture_single_line_comment(input_iter, tokens);
-                } else {
-                    continue;
-                }
-            } else if c == '#' {
+            } else if c == '#' || (c == '-' && self.check_delimiter("--")) {
                 //
                 // Single-line comment starting by '#' (MySQL).
+                // Single-line comment starting by '--' (most SQL dialects).
                 //
-                self.capture_token(tokens, self.offset(), self.offset(), TokenValue::Comment);
+                self.capture_token(tokens, self.offset(), self.offset(), TokenValue::Any);
                 self.capture_single_line_comment(input_iter, tokens);
-            } else if c == '/' {
+            } else if c == '/' && self.check_delimiter("/*") {
                 //
                 // Either a multi-line comment '/* ... */' or a division operator.
                 //
-                next_char = self.get_next_char(input_iter);
-                if next_char.as_ref() == Some(&'*') {
-                    self.capture_token(tokens, self.offset() - 1, self.offset() - 1, TokenValue::Comment);
-                    self.capture_multi_line_comment(input_iter, tokens);
-                } else {
-                    continue;
-                }
+                self.capture_token(tokens, self.offset(), self.offset(), TokenValue::Any);
+                self.capture_multi_line_comment(input_iter, tokens);
             } else if c == '"' || c == '`' || c == '\'' {
                 //
                 // Quoted identifier or String literal.
@@ -333,23 +330,33 @@ impl<'s> Tokenizer<'s> {
                 self.capture_token(tokens, self.next_offset, self.next_offset, TokenValue::Any);
                 let mut nested_tokens: Tokens = Tokens { tokens: Vec::new() };
                 next_char = self.capture_fragment(input_iter, delimiter, &mut nested_tokens);
-                self.add_token(TokenValue::Fragment(nested_tokens), self.offset(), self.next_offset, tokens);
+                self.add_token(TokenValue::Fragment(nested_tokens), self.offset(), self.offset(), tokens);
                 // We cannot assume the next character is the end of the parentheses block because we could have
-                // reached the end of the input. We just continue, the next character will be captured as a token if
-                // present.
-                continue;
+                // reached the end of the input or the statement delimiter.
+                if next_char.as_ref() == Some(&')') {
+                    // Capturing the end parenthesis.
+                    self.capture_token(tokens, self.next_offset, self.next_offset, TokenValue::Any);
+                } else {
+                    // End of the input or statement delimiter found.
+                    return next_char;
+                }
             } else if c == ')' {
                 //
                 // End of a parentheses block.
                 //
-                // Capture the parentheses as a token.
-                self.capture_token(tokens, self.next_offset, self.next_offset, TokenValue::Any);
+                // Capture the last token before the end parenthesis.
+                self.capture_token(tokens, self.offset(), self.next_offset, TokenValue::Any);
+                // Then we return to the caller so it can capture the end parenthesis as a token in the same fragment
+                // level as the opening parenthesis.
+                return next_char;
             } else if !c.is_alphanumeric() && c != '_' {
                 //
                 // Any other character that is not an underscore or alphanumeric will be considered as a boundary
-                // for a token.
+                // for a token, except for operators.
                 //
-                self.capture_token(tokens, self.offset(), self.next_offset, TokenValue::Any);
+                if !self.try_capture_operator(input_iter, tokens) {
+                    self.capture_token(tokens, self.offset(), self.offset(), TokenValue::Any);
+                }
             }
             next_char = self.get_next_char(input_iter);
         }
@@ -357,6 +364,31 @@ impl<'s> Tokenizer<'s> {
         // The delimiter was not found and we reached the end of the input, we need to capture the last token.
         self.capture_token(tokens, self.next_offset, self.offset(), TokenValue::Any);
         next_char
+    }
+
+    // Try to capture an operator.
+    //
+    // The tokenizer will try to match the longest operator possible.
+    // If an operator is found:
+    // - 2 tokens will be added to the tokens list if the operator is preceded by a token, otherwise only the operator
+    //   token will be added.
+    // - the iterator will be moved to the end of the operator.
+    //
+    // Returns true if an operator was found, false otherwise.
+    fn try_capture_operator(&mut self, input_iter: &mut std::str::Chars, tokens: &mut Tokens<'s>) -> bool {
+        let remaining_input = &self.input[self.offset()..];
+        let operator = OPERATORS.iter().find(|&op| remaining_input.starts_with(op));
+        if let Some(op) = operator {
+            // We found an operator, we need to capture the current token before the operator.
+            self.capture_token(tokens, self.offset(), self.offset(), TokenValue::Any);
+            // Capture the operator
+            self.capture_token(tokens, self.offset() + op.len(), self.offset() + op.len(), TokenValue::Operator);
+            // We need to move the iterator to the end of the operator.
+            self.skip(input_iter, op.len() - 1);
+            true
+        } else {
+            false
+        }
     }
 
     fn get_statement(&mut self, input_iter: &mut std::str::Chars, delimiter: &str) -> Option<SqlStatement<'s>> {
@@ -433,13 +465,49 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_comma() {
+        let s: Vec<_> = Tokenizer::new("1, 2, /* , */", ";").collect();
+        let tokens = s[0].tokens();
+        assert_eq!(tokens.as_str_array(), &["1", ",", "2", ",", "/* , */"]);
+        assert!(tokens[1].is_comma());
+        assert!(tokens[3].is_comma());    
+    }
+
+    #[test]
+    fn test_operators() {
+        let s: Vec<_> = Tokenizer::new("1 + 2+3 -4-5 * 6*7 / 8/9", ";").collect();
+        let tokens = s[0].tokens();
+        assert_eq!(
+            tokens.as_str_array(),
+            &["1", "+", "2", "+", "3", "-", "4", "-", "5", "*", "6", "*", "7", "/", "8", "/", "9"]
+        );
+    }
+
+    #[test]
+    fn test_parenthesis() {
+        let s: Vec<_> = Tokenizer::new("SELECT (1 + 2) * 3", ";").collect();
+        let tokens = s[0].tokens();
+        assert_eq!(tokens.as_str_array(), &["SELECT", "(", "1", "+", "2", ")", "*", "3"]);
+        assert!(tokens[1].is_parenthesis());
+        assert!(tokens[2].is_fragment());
+        assert!(tokens[3].is_parenthesis());
+
+        let s: Vec<_> = Tokenizer::new("SELECT ((1+2)*(3*4))", ";").collect();
+        let tokens = s[0].tokens();
+        assert_eq!(tokens.as_str_array(), &["SELECT", "(", "(", "1", "+", "2", ")", "*", "(", "3", "*", "4", ")", ")"]);
+    }
+
+    #[test]
     fn test_delimited_token() {
         let s: Vec<_> = Tokenizer::new("BEGIN $$O'Reilly$$, $tag$with_tag$tag$, $x$__$__$x$ END", ";").collect();
         let tokens = s[0].tokens();
-        assert_eq!(tokens.as_str_array(), &["BEGIN", "$$O'Reilly$$", "$tag$with_tag$tag$", "$x$__$__$x$", "END"]);
+        assert_eq!(
+            tokens.as_str_array(),
+            &["BEGIN", "$$O'Reilly$$", ",", "$tag$with_tag$tag$", ",", "$x$__$__$x$", "END"]
+        );
         assert!(tokens[1].is_delimited());
-        assert!(tokens[2].is_delimited());
         assert!(tokens[3].is_delimited());
+        assert!(tokens[5].is_delimited());
     }
 
     #[test]
@@ -481,5 +549,11 @@ mod tests {
         assert_eq!(s.len(), 2);
         assert_eq!(s[0].sql(), "SELECT 1;");
         assert_eq!(s[1].sql(), "SELECT 2");
+    }
+
+    #[test]
+    fn test_empty_input() {
+        let s: Vec<_> = Tokenizer::new("", ";").collect();
+        assert_eq!(s.len(), 0);
     }
 }

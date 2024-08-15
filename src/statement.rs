@@ -82,10 +82,11 @@ mod tests {
 
     #[test]
     fn test_statement_is_empty() {
-        let statements: Vec<_> = loose_sqlparse("SELECT 1;\n\t \n; SELECT 2").collect();
-        assert_eq!(statements.len(), 3);
+        let statements: Vec<_> = loose_sqlparse("SELECT 1;\n\t \n;;SELECT 2").collect();
+        assert_eq!(statements.len(), 4);
         assert!(!statements[0].is_empty());
         assert!(statements[1].is_empty());
-        assert!(!statements[2].is_empty());
+        assert!(statements[2].is_empty());
+        assert!(!statements[3].is_empty());
     }
 }
