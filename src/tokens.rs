@@ -126,6 +126,14 @@ impl<'s> Tokens<'s> {
     pub fn is_empty(&self) -> bool {
         self.tokens.is_empty()
     }
+
+    pub fn first(&self) -> Option<&Token<'s>> {
+        self.tokens.first()
+    }
+
+    pub fn last(&self) -> Option<&Token<'s>> {
+        self.tokens.last()
+    }
 }
 
 /// Accessing tokens by index.

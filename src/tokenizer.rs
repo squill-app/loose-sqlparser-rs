@@ -37,7 +37,7 @@ impl<'s> Iterator for Tokenizer<'s> {
         // The start of the next statement is where the tokenizer is currently positioned.
         let next = &self.input[self.next_offset..];
         let mut input_iter = next.chars();
-        self.get_statement(input_iter.by_ref(), self.delimiter)
+        self.get_next_statement(input_iter.by_ref(), self.delimiter)
     }
 }
 
@@ -345,7 +345,7 @@ impl<'s> Tokenizer<'s> {
                 // End of a parentheses block.
                 //
                 // Capture the last token before the end parenthesis.
-                self.capture_token(tokens, self.offset(), self.next_offset, TokenValue::Any);
+                self.capture_token(tokens, self.offset(), self.offset(), TokenValue::Any);
                 // Then we return to the caller so it can capture the end parenthesis as a token in the same fragment
                 // level as the opening parenthesis.
                 return next_char;
@@ -388,24 +388,6 @@ impl<'s> Tokenizer<'s> {
             true
         } else {
             false
-        }
-    }
-
-    fn get_statement(&mut self, input_iter: &mut std::str::Chars, delimiter: &str) -> Option<SqlStatement<'s>> {
-        // Capture all tokens until the next semicolon.
-        let mut tokens: Tokens = Tokens { tokens: Vec::new() };
-        let next_char = self.capture_fragment(input_iter, delimiter, &mut tokens);
-        if next_char.is_some() {
-            // The delimiter was found but not captured as a token, we need to capture it now.
-            // Moving forward the iterator until the end of the delimiter.
-            self.skip(input_iter, delimiter.len() - 1);
-            self.capture_token(&mut tokens, self.next_offset, self.next_offset, TokenValue::StatementDelimiter);
-        }
-
-        match tokens.is_empty() {
-            // We reached the end of the input without finding any token.
-            true => None,
-            false => Some(SqlStatement { input: self.input, tokens }),
         }
     }
 
@@ -458,6 +440,39 @@ impl<'s> Tokenizer<'s> {
         // We reached the end of the input without finding the end of the token...
         next_char
     }
+
+    // Get the next statement from the input.
+    // The end of the next statement is determined by the delimiter provided or the end of the input.
+    fn get_next_statement(&mut self, input_iter: &mut std::str::Chars, delimiter: &str) -> Option<SqlStatement<'s>> {
+        // Capture all tokens until the next semicolon.
+        let mut tokens: Tokens = Tokens { tokens: Vec::new() };
+
+        // Under normal circumstances, the tokenizer will either return None if the input is empty or the first
+        // character if the delimiter if found.
+        // Nevertheless we need to handle the case where the tokenizer was stopped by a closing parenthesis without a
+        // matching opening parenthesis. This is why we need to loop until we find the delimiter or reach the end of the
+        // input.
+        while self.capture_fragment(input_iter, delimiter, &mut tokens).is_some() {
+            if self.check_delimiter(delimiter) {
+                // The delimiter was found but not captured as a token, we need to capture it now.
+                // Moving forward the iterator until the end of the delimiter.
+                self.skip(input_iter, delimiter.len() - 1);
+                self.capture_token(&mut tokens, self.next_offset, self.next_offset, TokenValue::StatementDelimiter);
+                break;
+            } else {
+                // We need to continue the tokenization because we found a closing parenthesis without a matching
+                // opening parenthesis.
+                // We need to capture the closing parenthesis as a token before resuming the tokenization.
+                self.capture_token(&mut tokens, self.next_offset, self.next_offset, TokenValue::Any);
+            }
+        }
+
+        match tokens.is_empty() {
+            // We reached the end of the input without finding any token.
+            true => None,
+            false => Some(SqlStatement { input: self.input, tokens }),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -470,7 +485,7 @@ mod tests {
         let tokens = s[0].tokens();
         assert_eq!(tokens.as_str_array(), &["1", ",", "2", ",", "/* , */"]);
         assert!(tokens[1].is_comma());
-        assert!(tokens[3].is_comma());    
+        assert!(tokens[3].is_comma());
     }
 
     #[test]
@@ -485,6 +500,13 @@ mod tests {
 
     #[test]
     fn test_parenthesis() {
+        // A missing opening parenthesis should not stop the tokenizer when reaching a closing parenthesis.
+        let s: Vec<_> = Tokenizer::new("SELECT 1 + 2) + 3; SELECT 2", ";").collect();
+        assert!(s.len() == 2);
+        assert_eq!(s[0].tokens().as_str_array(), &["SELECT", "1", "+", "2", ")", "+", "3", ";"]);
+        assert!(s[0].tokens().last().unwrap().is_statement_delimiter());
+        assert_eq!(s[1].tokens().as_str_array(), &["SELECT", "2"]);
+
         let s: Vec<_> = Tokenizer::new("SELECT (1 + 2) * 3", ";").collect();
         let tokens = s[0].tokens();
         assert_eq!(tokens.as_str_array(), &["SELECT", "(", "1", "+", "2", ")", "*", "3"]);
@@ -495,6 +517,13 @@ mod tests {
         let s: Vec<_> = Tokenizer::new("SELECT ((1+2)*(3*4))", ";").collect();
         let tokens = s[0].tokens();
         assert_eq!(tokens.as_str_array(), &["SELECT", "(", "(", "1", "+", "2", ")", "*", "(", "3", "*", "4", ")", ")"]);
+
+        // A missing closing parenthesis should not prevent the tokenizer to stop when reaching the statement delimiter.
+        let s: Vec<_> = Tokenizer::new("SELECT (1 + 2 + 3; SELECT 2", ";").collect();
+        assert!(s.len() == 2);
+        assert_eq!(s[0].tokens().as_str_array(), &["SELECT", "(", "1", "+", "2", "+", "3", ";"]);
+        assert!(s[0].tokens().last().unwrap().is_statement_delimiter());
+        assert_eq!(s[1].tokens().as_str_array(), &["SELECT", "2"]);
     }
 
     #[test]
