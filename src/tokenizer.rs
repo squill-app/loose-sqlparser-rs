@@ -1,16 +1,16 @@
 use crate::tokens::{Token, TokenValue, Tokens};
 use crate::SqlStatement;
 
-pub(crate) struct Scanner<'s> {
+pub(crate) struct Tokenizer<'s> {
     input: &'s str,
 
     /// The offset of the next character to be read from the input
     next_offset: usize,
 
-    /// The current line of the scanner.
+    /// The current line of the tokenizer.
     line: usize,
 
-    /// The current column of the scanner.
+    /// The current column of the tokenizer.
     column: usize,
 
     /// The offset of the start of the token currently being scanned.
@@ -20,26 +20,26 @@ pub(crate) struct Scanner<'s> {
     delimiter: &'s str,
 }
 
-impl<'s> Iterator for Scanner<'s> {
+impl<'s> Iterator for Tokenizer<'s> {
     type Item = SqlStatement<'s>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.next_offset >= self.input.len() {
             return None;
         }
-        // The start of the next statement is where the scanner is currently positioned.
+        // The start of the next statement is where the tokenizer is currently positioned.
         let next = &self.input[self.next_offset..];
         let mut input_iter = next.chars();
         self.get_statement(input_iter.by_ref(), self.delimiter)
     }
 }
 
-impl<'s> Scanner<'s> {
+impl<'s> Tokenizer<'s> {
     pub(crate) fn new(input: &'s str, delimiter: &'s str) -> Self {
-        Scanner { input, next_offset: 0, line: 1, column: 1, token_start_offset: 0, delimiter }
+        Tokenizer { input, next_offset: 0, line: 1, column: 1, token_start_offset: 0, delimiter }
     }
 
-    // The current offset of the scanner.
+    // The current offset of the tokenizer.
     // This is the offset of the last character read from the input.
     #[inline]
     fn offset(&self) -> usize {
@@ -170,7 +170,7 @@ impl<'s> Scanner<'s> {
     //   'IDENTIFIER "X"', use 'IDENTIFIER ""X""'.
     //
     // Because this function has to peek the next character to check for an escaped delimiter, it returns the next
-    // character to be processed by the scanner.
+    // character to be processed by the tokenizer.
     fn capture_quoted_token(
         &mut self,
         input_iter: &mut std::str::Chars,
@@ -184,7 +184,7 @@ impl<'s> Scanner<'s> {
                 next_char = self.get_next_char(input_iter);
                 if next_char.as_ref() != Some(&quote_char) {
                     // We found the end of the quoted token.
-                    // We return the next character to the scanner so it can be processed.
+                    // We return the next character to the tokenizer so it can be processed.
                     self.capture_token(tokens, self.offset(), self.next_offset, TokenValue::Quoted);
                     return next_char;
                 }
@@ -256,7 +256,7 @@ impl<'s> Scanner<'s> {
                 //
                 // Delimiter.
                 //
-                // Capture the last token before the delimiter and return the next character to the scanner so it can
+                // Capture the last token before the delimiter and return the next character to the tokenizer so it can
                 // continue the processing of the input starting from the beginning of delimiter (which is returned by
                 // `next_char`).
                 self.capture_token(tokens, self.offset(), self.offset(), TokenValue::Any);
@@ -381,7 +381,7 @@ impl<'s> Scanner<'s> {
     //
     // The delimiter can be a single character or a multi-character delimiter.
     // There is no escaping mechanism for delimiters, so if the delimiter is found the token is captured and the next
-    // character is returned to the scanner.
+    // character is returned to the tokenizer.
     //
     // This is used to capture Dollar-Quoted Strings in PostgreSQL.
     // See: https://www.postgresql.org/docs/current/sql-syntax-lexical.html#SQL-SYNTAX-DOLLAR-QUOTING
@@ -412,7 +412,7 @@ impl<'s> Scanner<'s> {
                         self.offset() + delimiter.len(),
                         TokenValue::Delimited,
                     );
-                    // We return the next character to the scanner so it can be processed.
+                    // We return the next character to the tokenizer so it can be processed.
                     self.skip(input_iter, delimiter.len() - 1);
                     return self.get_next_char(input_iter);
                 }
@@ -434,7 +434,7 @@ mod tests {
 
     #[test]
     fn test_delimited_token() {
-        let s: Vec<_> = Scanner::new("BEGIN $$O'Reilly$$, $tag$with_tag$tag$, $x$__$__$x$ END", ";").collect();
+        let s: Vec<_> = Tokenizer::new("BEGIN $$O'Reilly$$, $tag$with_tag$tag$, $x$__$__$x$ END", ";").collect();
         let tokens = s[0].tokens();
         assert_eq!(tokens.as_str_array(), &["BEGIN", "$$O'Reilly$$", "$tag$with_tag$tag$", "$x$__$__$x$", "END"]);
         assert!(tokens[1].is_delimited());
@@ -445,7 +445,7 @@ mod tests {
     #[test]
     fn test_multi_line_comments() {
         let s: Vec<_> =
-            Scanner::new("/* /*nested*/comment */ /** line\n *  break\n **/ /* not closed...", ";").collect();
+            Tokenizer::new("/* /*nested*/comment */ /** line\n *  break\n **/ /* not closed...", ";").collect();
         let tokens = s[0].tokens();
         assert_eq!(
             tokens.as_str_array(),
@@ -458,7 +458,7 @@ mod tests {
 
     #[test]
     fn test_single_line_comments() {
-        let s: Vec<_> = Scanner::new("-- comment\n# comment\n# comment", ";").collect();
+        let s: Vec<_> = Tokenizer::new("-- comment\n# comment\n# comment", ";").collect();
         let tokens = s[0].tokens();
         assert_eq!(tokens.as_str_array(), &["-- comment", "# comment", "# comment"]);
         assert!(tokens[0].is_comment());
@@ -468,7 +468,7 @@ mod tests {
 
     #[test]
     fn test_quoted_token() {
-        let s: Vec<_> = Scanner::new(r#"'' "ID" "ID ""X""" '''' 'O''Reilly' "#, ";").collect();
+        let s: Vec<_> = Tokenizer::new(r#"'' "ID" "ID ""X""" '''' 'O''Reilly' "#, ";").collect();
         let tokens = s[0].tokens();
         assert_eq!(tokens.as_str_array(), &["''", r#""ID""#, r#""ID ""X""""#, "''''", "'O''Reilly'"]);
         assert!(tokens[1].is_quoted());
@@ -477,7 +477,7 @@ mod tests {
 
     #[test]
     fn test_split_statements() {
-        let s: Vec<_> = Scanner::new("SELECT 1; SELECT 2", ";").collect();
+        let s: Vec<_> = Tokenizer::new("SELECT 1; SELECT 2", ";").collect();
         assert_eq!(s.len(), 2);
         assert_eq!(s[0].sql(), "SELECT 1;");
         assert_eq!(s[1].sql(), "SELECT 2");

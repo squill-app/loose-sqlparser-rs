@@ -1,9 +1,9 @@
-use scanner::Scanner;
-use statement::SqlStatement;
-
-mod scanner;
 pub mod statement;
+mod tokenizer;
 pub mod tokens;
+
+use statement::SqlStatement;
+use tokenizer::Tokenizer;
 
 /// Represents a position in the input string.
 #[derive(Debug)]
@@ -26,7 +26,7 @@ pub struct Position {
 /// The iterator will return a {{SqlStatement}} for each statement found in the input string.
 /// Statements are separated by a semicolon (`;`).
 pub fn loose_sqlparse(sql: &str) -> impl Iterator<Item = SqlStatement<'_>> {
-    Scanner::new(sql, ";")
+    Tokenizer::new(sql, ";")
 }
 
 /// Scans a SQL string and returns an iterator over the statements.
@@ -36,5 +36,5 @@ pub fn loose_sqlparse(sql: &str) -> impl Iterator<Item = SqlStatement<'_>> {
 /// The iterator will return a {{SqlStatement}} for each statement found in the input string.
 /// Statements are separated by the given delimiter.
 pub fn loose_sqlparse_with_delimiter<'s>(sql: &'s str, delimiter: &'s str) -> impl Iterator<Item = SqlStatement<'s>> {
-    Scanner::new(sql, delimiter)
+    Tokenizer::new(sql, delimiter)
 }
