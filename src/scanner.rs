@@ -15,6 +15,9 @@ pub(crate) struct Scanner<'s> {
 
     /// The offset of the start of the token currently being scanned.
     token_start_offset: usize,
+
+    /// The SQL delimiter used to separate statements.
+    delimiter: &'s str,
 }
 
 impl<'s> Iterator for Scanner<'s> {
@@ -27,13 +30,13 @@ impl<'s> Iterator for Scanner<'s> {
         // The start of the next statement is where the scanner is currently positioned.
         let next = &self.input[self.next_offset..];
         let mut input_iter = next.chars();
-        self.get_statement(input_iter.by_ref())
+        self.get_statement(input_iter.by_ref(), self.delimiter)
     }
 }
 
 impl<'s> Scanner<'s> {
-    pub(crate) fn new(input: &'s str) -> Self {
-        Scanner { input, next_offset: 0, line: 1, column: 1, token_start_offset: 0 }
+    pub(crate) fn new(input: &'s str, delimiter: &'s str) -> Self {
+        Scanner { input, next_offset: 0, line: 1, column: 1, token_start_offset: 0, delimiter }
     }
 
     // The current offset of the scanner.
@@ -63,6 +66,25 @@ impl<'s> Scanner<'s> {
         true
     }
 
+    fn add_token(
+        &mut self,
+        token_value: TokenValue<'s>,
+        end_offset: usize,
+        next_token_offset: usize,
+        tokens: &mut Tokens<'s>,
+    ) {
+        tokens.tokens.push(Token::new(
+            token_value,
+            self.token_start_offset,
+            end_offset,
+            self.line,
+            self.column,
+            self.line,
+            self.column,
+        ));
+        self.token_start_offset = next_token_offset;
+    }
+
     // Capture the current token.
     //
     // The token is captured from {{self.token_start_offset}} to the ending offset provided.
@@ -76,17 +98,10 @@ impl<'s> Scanner<'s> {
     ) {
         if end_offset > self.token_start_offset {
             let value = value_constructor(&self.input[self.token_start_offset..end_offset]).into();
-            tokens.tokens.push(Token::new(
-                value,
-                self.token_start_offset,
-                end_offset,
-                self.line,
-                self.column,
-                self.line,
-                self.column,
-            ));
+            self.add_token(value, end_offset, next_token_offset, tokens);
+        } else {
+            self.token_start_offset = next_token_offset;
         }
-        self.token_start_offset = next_token_offset;
     }
 
     // Can be either `--` or `#`.
@@ -95,12 +110,16 @@ impl<'s> Scanner<'s> {
     fn capture_single_line_comment(&mut self, input_iter: &mut std::str::Chars, tokens: &mut Tokens<'s>) {
         while let Some(c) = self.get_next_char(input_iter) {
             if c == '\n' {
+                // We found the end of the comment.
+                self.capture_token(tokens, self.offset(), self.next_offset, TokenValue::Comment);
                 self.line += 1;
                 self.column = 1;
-                break;
+                return;
             }
         }
-        self.capture_token(tokens, self.offset(), self.next_offset, TokenValue::Comment);
+        // We reached the end of the input without finding the end of the comment.
+        // Capture what we have so far...
+        self.capture_token(tokens, self.next_offset, self.next_offset, TokenValue::Comment);
     }
 
     // The /* ... */ multi-line comment is widely supported supported across different SQL dialects.
@@ -182,11 +201,6 @@ impl<'s> Scanner<'s> {
         next_char
     }
 
-    // Skip the parentheses.
-    fn skip_parentheses(&mut self) {
-        todo!()
-    }
-
     #[inline]
     fn get_next_char(&mut self, input_iter: &mut std::str::Chars) -> Option<char> {
         let next_char = input_iter.next();
@@ -195,6 +209,13 @@ impl<'s> Scanner<'s> {
             self.column += 1;
         }
         next_char
+    }
+
+    // Check if the input at the current position starts with the given delimiter (case-sensitive).
+    #[inline]
+    fn check_delimiter(&self, delimiter: &str) -> bool {
+        let remaining_input = &self.input[self.offset()..];
+        remaining_input.starts_with(delimiter)
     }
 
     // Skip n characters from the iterator.
@@ -209,141 +230,150 @@ impl<'s> Scanner<'s> {
         }
     }
 
-    fn get_statement(&mut self, input_iter: &mut std::str::Chars) -> Option<SqlStatement<'s>> {
-        loop {
-            // Capture the start of the statement.
-            let start_line = self.line;
-            let start_column = self.column;
-            let start_offset = self.next_offset;
-
-            // Reset the offset of the next token to the start of the statement.
-            self.token_start_offset = self.next_offset;
-
-            // A list of tokens that will be used to determine if the statement is a query or a command.
-            // Tokens are captured at the top level so tokens found in CTEs or sub queries are not included in this list.
-            // A token can be either a keyword, an identifier, a string literal, a number, a function name,
-            // an expression such as '1+1', etc. Because everything between parentheses is skipped by the scanner, they
-            // are not included in the list of tokens. Same applies to comments and string literals and quoted
-            // identifiers.
-            let mut tokens: Tokens = Tokens { tokens: Vec::new() };
-
-            let mut next_char = self.get_next_char(input_iter);
-            while let Some(c) = next_char {
-                if c == '\n' {
-                    //
-                    // New Line.
-                    //
-                    self.capture_token(&mut tokens, self.offset(), self.next_offset, TokenValue::Any);
-                    self.line += 1;
-                    self.column = 1;
-                } else if c == '\r' {
-                    //
-                    // Carriage Return (ignored).
-                    //
-                    self.capture_token(&mut tokens, self.offset(), self.next_offset, TokenValue::Any);
-                    self.column -= 1;
-                } else if c == ';' {
-                    //
-                    // Statement delimiter.
-                    //
-                    // We found the delimiter, it's the end of the statement.
-                    self.capture_token(&mut tokens, self.offset(), self.next_offset, TokenValue::Any);
-                    break;
-                } else if c.is_whitespace() {
-                    //
-                    // Whitespace (could be \s, \t, \r, \n, etc.).
-                    //
-                    self.capture_token(&mut tokens, self.offset(), self.next_offset, TokenValue::Any);
-                } else if c == '-' {
-                    //
-                    // Either a single-line comment '--' or a minus sign.
-                    //
-                    next_char = self.get_next_char(input_iter);
-                    if next_char.as_ref() == Some(&'-') {
-                        self.capture_token(&mut tokens, self.offset() - 1, self.offset() - 1, TokenValue::Comment);
-                        self.capture_single_line_comment(input_iter, &mut tokens);
-                    } else {
-                        continue;
-                    }
-                } else if c == '#' {
-                    //
-                    // Single-line comment starting by '#' (MySQL).
-                    //
-                    self.capture_token(&mut tokens, self.offset(), self.offset(), TokenValue::Comment);
-                    self.capture_single_line_comment(input_iter, &mut tokens);
-                } else if c == '/' {
-                    //
-                    // Either a multi-line comment '/* ... */' or a division operator.
-                    //
-                    next_char = self.get_next_char(input_iter);
-                    if next_char.as_ref() == Some(&'*') {
-                        self.capture_token(&mut tokens, self.offset() - 1, self.offset() - 1, TokenValue::Comment);
-                        self.capture_multi_line_comment(input_iter, &mut tokens);
-                    } else {
-                        continue;
-                    }
-                } else if c == '"' || c == '`' || c == '\'' {
-                    //
-                    // Quoted identifier or String literal.
-                    //
-                    next_char = self.capture_quoted_token(input_iter, c, &mut tokens);
-                    continue;
-                } else if c == '$' {
-                    //
-                    // May be dollar quoting (PostgreSQL).
-                    //
-                    // Before starting to identify the dollar-quoted delimiter we need to capture the current token.
-                    self.capture_token(&mut tokens, self.offset(), self.offset(), TokenValue::Any);
-
-                    // A dollar-quoted delimiter consists of a dollar sign ($), an optional “tag” of zero or more
-                    // characters and another dollar sign.
-                    // - The tag is case-sensitive, so $TAG$...$TAG$ is different from $tag$...$tag$.
-                    // - The tag consists of letters (A-Z, a-z), digits (0-9), and underscores (_).
-                    next_char = self.get_next_char(input_iter);
-                    while next_char.is_some()
-                        && (next_char.as_ref().unwrap().is_alphanumeric() || next_char.as_ref() == Some(&'_'))
-                    {
-                        next_char = self.get_next_char(input_iter);
-                    }
-                    if next_char.as_ref() == Some(&'$') {
-                        // We found the end of the dollar-quoted delimiter.
-                        let delimiter = &self.input[self.token_start_offset..self.next_offset];
-                        next_char = self.capture_delimited_token(input_iter, delimiter, &mut tokens);
-                    }
-                    continue;
-                } else if c == '(' {
-                    //
-                    // Start of a parentheses block.
-                    //
-                    self.skip_parentheses();
-                } else if !c.is_alphanumeric() && c != '_' {
-                    //
-                    // Any other character that is not an underscore or alphanumeric will be considered as a boundary
-                    // for a token.
-                    //
-                    self.capture_token(&mut tokens, self.offset(), self.next_offset, TokenValue::Any);
-                }
+    fn capture_fragment(
+        &mut self,
+        input_iter: &mut std::str::Chars,
+        delimiter: &str,
+        tokens: &mut Tokens<'s>,
+    ) -> Option<char> {
+        let delimiter_start_char = delimiter.chars().next().expect("delimiter must not be empty");
+        let mut next_char = self.get_next_char(input_iter);
+        while let Some(c) = next_char {
+            if c == '\n' {
+                //
+                // New Line.
+                //
+                self.capture_token(tokens, self.offset(), self.next_offset, TokenValue::Any);
+                self.line += 1;
+                self.column = 1;
+            } else if c == '\r' {
+                //
+                // Carriage Return (ignored).
+                //
+                self.capture_token(tokens, self.offset(), self.next_offset, TokenValue::Any);
+                self.column -= 1;
+            } else if c == delimiter_start_char && self.check_delimiter(delimiter) {
+                //
+                // Delimiter.
+                //
+                // Capture the last token before the delimiter and return the next character to the scanner so it can
+                // continue the processing of the input starting from the beginning of delimiter (which is returned by
+                // `next_char`).
+                self.capture_token(tokens, self.offset(), self.offset(), TokenValue::Any);
+                return next_char;
+            } else if c.is_whitespace() {
+                //
+                // Whitespace (could be \s, \t, \r, \n, etc.).
+                //
+                self.capture_token(tokens, self.offset(), self.next_offset, TokenValue::Any);
+            } else if c == '-' {
+                //
+                // Either a single-line comment '--' or a minus sign.
+                //
                 next_char = self.get_next_char(input_iter);
-            }
+                if next_char.as_ref() == Some(&'-') {
+                    self.capture_token(tokens, self.offset() - 1, self.offset() - 1, TokenValue::Comment);
+                    self.capture_single_line_comment(input_iter, tokens);
+                } else {
+                    continue;
+                }
+            } else if c == '#' {
+                //
+                // Single-line comment starting by '#' (MySQL).
+                //
+                self.capture_token(tokens, self.offset(), self.offset(), TokenValue::Comment);
+                self.capture_single_line_comment(input_iter, tokens);
+            } else if c == '/' {
+                //
+                // Either a multi-line comment '/* ... */' or a division operator.
+                //
+                next_char = self.get_next_char(input_iter);
+                if next_char.as_ref() == Some(&'*') {
+                    self.capture_token(tokens, self.offset() - 1, self.offset() - 1, TokenValue::Comment);
+                    self.capture_multi_line_comment(input_iter, tokens);
+                } else {
+                    continue;
+                }
+            } else if c == '"' || c == '`' || c == '\'' {
+                //
+                // Quoted identifier or String literal.
+                //
+                next_char = self.capture_quoted_token(input_iter, c, tokens);
+                continue;
+            } else if c == '$' {
+                //
+                // May be dollar quoting (PostgreSQL).
+                //
+                // Before starting to identify the dollar-quoted delimiter we need to capture the current token.
+                self.capture_token(tokens, self.offset(), self.offset(), TokenValue::Any);
 
-            if next_char.is_none() {
-                // We've reached the end of the input, we may have a last token to capture.
-                self.capture_token(&mut tokens, self.next_offset, self.next_offset, TokenValue::Any);
+                // A dollar-quoted delimiter consists of a dollar sign ($), an optional “tag” of zero or more
+                // characters and another dollar sign.
+                // - The tag is case-sensitive, so $TAG$...$TAG$ is different from $tag$...$tag$.
+                // - The tag consists of letters (A-Z, a-z), digits (0-9), and underscores (_).
+                next_char = self.get_next_char(input_iter);
+                while next_char.is_some()
+                    && (next_char.as_ref().unwrap().is_alphanumeric() || next_char.as_ref() == Some(&'_'))
+                {
+                    next_char = self.get_next_char(input_iter);
+                }
+                if next_char.as_ref() == Some(&'$') {
+                    // We found the end of the dollar-quoted delimiter.
+                    let delimiter = &self.input[self.token_start_offset..self.next_offset];
+                    next_char = self.capture_delimited_token(input_iter, delimiter, tokens);
+                }
+                continue;
+            } else if c == '(' {
+                //
+                // Start of a parentheses block.
+                //
+                // Capture the previous token if any.
+                self.capture_token(tokens, self.offset(), self.offset(), TokenValue::Any);
+                // Capture the parentheses as a token.
+                self.capture_token(tokens, self.next_offset, self.next_offset, TokenValue::Any);
+                let mut nested_tokens: Tokens = Tokens { tokens: Vec::new() };
+                next_char = self.capture_fragment(input_iter, delimiter, &mut nested_tokens);
+                self.add_token(TokenValue::Fragment(nested_tokens), self.offset(), self.next_offset, tokens);
+                // We cannot assume the next character is the end of the parentheses block because we could have
+                // reached the end of the input. We just continue, the next character will be captured as a token if
+                // present.
+                continue;
+            } else if c == ')' {
+                //
+                // End of a parentheses block.
+                //
+                // Capture the parentheses as a token.
+                self.capture_token(tokens, self.next_offset, self.next_offset, TokenValue::Any);
+            } else if !c.is_alphanumeric() && c != '_' {
+                //
+                // Any other character that is not an underscore or alphanumeric will be considered as a boundary
+                // for a token.
+                //
+                self.capture_token(tokens, self.offset(), self.next_offset, TokenValue::Any);
             }
+            next_char = self.get_next_char(input_iter);
+        }
 
-            // Before returning the statement we'll trim it to remove leading and trailing whitespaces & newlines.
-            let sql = self.input[start_offset..self.next_offset]
-                .trim_start_matches(char::is_whitespace)
-                .trim_end_matches(|c: char| c.is_whitespace() || c == ';');
+        // The delimiter was not found and we reached the end of the input, we need to capture the last token.
+        self.capture_token(tokens, self.next_offset, self.offset(), TokenValue::Any);
+        next_char
+    }
 
-            // If there is no SQL statement (typically empty lines between two semicolons), we continue to scan
-            // until we reach the end of the input or find a statement.
-            if !sql.is_empty() {
-                return Some(SqlStatement { sql, start_line, start_column, tokens });
-            } else if next_char.is_none() {
-                // We reached the end of the input.
-                return None;
-            }
+    fn get_statement(&mut self, input_iter: &mut std::str::Chars, delimiter: &str) -> Option<SqlStatement<'s>> {
+        // Capture all tokens until the next semicolon.
+        let mut tokens: Tokens = Tokens { tokens: Vec::new() };
+        let next_char = self.capture_fragment(input_iter, delimiter, &mut tokens);
+        if next_char.is_some() {
+            // The delimiter was found but not captured as a token, we need to capture it now.
+            // Moving forward the iterator until the end of the delimiter.
+            self.skip(input_iter, delimiter.len() - 1);
+            self.capture_token(&mut tokens, self.next_offset, self.next_offset, TokenValue::StatementDelimiter);
+        }
+
+        match tokens.is_empty() {
+            // We reached the end of the input without finding any token.
+            true => None,
+            false => Some(SqlStatement { input: self.input, tokens }),
         }
     }
 
@@ -395,5 +425,61 @@ impl<'s> Scanner<'s> {
         }
         // We reached the end of the input without finding the end of the token...
         next_char
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_delimited_token() {
+        let s: Vec<_> = Scanner::new("BEGIN $$O'Reilly$$, $tag$with_tag$tag$, $x$__$__$x$ END", ";").collect();
+        let tokens = s[0].tokens();
+        assert_eq!(tokens.as_str_array(), &["BEGIN", "$$O'Reilly$$", "$tag$with_tag$tag$", "$x$__$__$x$", "END"]);
+        assert!(tokens[1].is_delimited());
+        assert!(tokens[2].is_delimited());
+        assert!(tokens[3].is_delimited());
+    }
+
+    #[test]
+    fn test_multi_line_comments() {
+        let s: Vec<_> =
+            Scanner::new("/* /*nested*/comment */ /** line\n *  break\n **/ /* not closed...", ";").collect();
+        let tokens = s[0].tokens();
+        assert_eq!(
+            tokens.as_str_array(),
+            &["/* /*nested*/comment */", "/** line\n *  break\n **/", "/* not closed..."]
+        );
+        assert!(tokens[0].is_comment());
+        assert!(tokens[1].is_comment());
+        assert!(tokens[2].is_comment());
+    }
+
+    #[test]
+    fn test_single_line_comments() {
+        let s: Vec<_> = Scanner::new("-- comment\n# comment\n# comment", ";").collect();
+        let tokens = s[0].tokens();
+        assert_eq!(tokens.as_str_array(), &["-- comment", "# comment", "# comment"]);
+        assert!(tokens[0].is_comment());
+        assert!(tokens[1].is_comment());
+        assert!(tokens[2].is_comment());
+    }
+
+    #[test]
+    fn test_quoted_token() {
+        let s: Vec<_> = Scanner::new(r#"'' "ID" "ID ""X""" '''' 'O''Reilly' "#, ";").collect();
+        let tokens = s[0].tokens();
+        assert_eq!(tokens.as_str_array(), &["''", r#""ID""#, r#""ID ""X""""#, "''''", "'O''Reilly'"]);
+        assert!(tokens[1].is_quoted());
+        assert!(tokens[2].is_quoted());
+    }
+
+    #[test]
+    fn test_split_statements() {
+        let s: Vec<_> = Scanner::new("SELECT 1; SELECT 2", ";").collect();
+        assert_eq!(s.len(), 2);
+        assert_eq!(s[0].sql(), "SELECT 1;");
+        assert_eq!(s[1].sql(), "SELECT 2");
     }
 }

@@ -1,32 +1,27 @@
-use crate::tokens::Tokens;
+use crate::{tokens::Tokens, Position};
 
 pub struct SqlStatement<'s> {
-    // The SQL statement.
-    pub(crate) sql: &'s str,
+    // The input from which the statement was parsed.
+    pub(crate) input: &'s str,
 
-    // The line and column where the statement starts.
-    pub(crate) start_line: usize,
-    pub(crate) start_column: usize,
-
-    // A list of tokens found in the statement at the top level.
-    // Tokens found on CTEs or sub queries are not included in this list.
+    // All tokens found in the statement.
     pub(crate) tokens: Tokens<'s>,
 }
 
 impl SqlStatement<'_> {
     /// The SQL statement.
     pub fn sql(&self) -> &str {
-        self.sql
+        return &self.input[self.start().offset..self.end().offset];
     }
 
-    /// The line where the statement starts.
-    pub fn start_line(&self) -> usize {
-        self.start_line
+    /// The start position of the statement.
+    pub fn start(&self) -> &Position {
+        &self.tokens[0].start
     }
 
     /// The column where the statement starts.
-    pub fn start_column(&self) -> usize {
-        self.start_column
+    pub fn end(&self) -> &Position {
+        &self.tokens[self.tokens.len() - 1].end
     }
 
     pub fn tokens(&self) -> &Tokens<'_> {
@@ -42,6 +37,13 @@ impl SqlStatement<'_> {
             .filter(|&&token| token.chars().all(|c| c.is_ascii_alphabetic()))
             .cloned() // Clone the &str references to return a Vec<&'s str>
             .collect()
+    }
+
+    /// Returns whether the statement is empty.
+    ///
+    /// An empty statement is a statement that contains nothing else that comments or whitespace.
+    pub fn is_empty(&self) -> bool {
+        self.tokens.tokens.iter().all(|t| t.is_comment() || t.is_statement_delimiter())
     }
 
     /// Returns whether the statement is a query or a command.
@@ -71,5 +73,19 @@ impl SqlStatement<'_> {
         // 4. The statement is a SELECT (except SELECT ... INTO).
             || (keywords[0].to_uppercase() == "SELECT"
                 && keywords.iter().any(|&k| k.to_uppercase().as_str() == "INTO"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::loose_sqlparse;
+
+    #[test]
+    fn test_statement_is_empty() {
+        let statements: Vec<_> = loose_sqlparse("SELECT 1;\n\t \n; SELECT 2").collect();
+        assert_eq!(statements.len(), 3);
+        assert!(!statements[0].is_empty());
+        assert!(statements[1].is_empty());
+        assert!(!statements[2].is_empty());
     }
 }
