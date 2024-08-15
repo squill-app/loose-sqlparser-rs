@@ -1,8 +1,20 @@
 [package]
-name = "loose-sql-parser"
+name = "loose-sqlparser"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[dependencies]
+license = "MIT"
+repository = "https://github.com/squill-app/loose-sqlparser-rs"
+keywords = [
+    "database",
+    "postgres",
+    "postgresql",
+    "sqlite",
+    "duckdb",
+    "mysql",
+    "mariadb",
+    "sqlite",
+    "sql",
+    "parser",
+]
+categories = ["database"]
+authors = ["Philippe Shampanier <pshampanier@gmail.com>"]

@@ -3,5 +3,5 @@
 version = 3
 
 [[package]]
-name = "loose-sql-parser"
+name = "loose-sqlparser"
 version = "0.1.0"
