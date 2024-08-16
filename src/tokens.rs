@@ -47,6 +47,13 @@ pub enum TokenValue<'s> {
     /// ```
     NumericConstant(&'s str),
 
+    /// An identifier or a keyword.
+    ///
+    /// SQL identifiers and key words must begin with a letter (a-z, but also letters with diacritical marks and
+    /// non-Latin letters) or an underscore (_). Subsequent characters in an identifier or key word can be letters,
+    /// underscores, digits (0-9), or dollar signs ($).
+    IdentifierOrKeyword(&'s str),
+
     /// An operator
     ///
     /// - Arithmetic operators: `+`, `-`, `*`, `/`, `=`, `!=`, `>`, `<`, `>=`, `<=`, `<>`, `||`, `!`, `%`
@@ -72,6 +79,7 @@ impl<'s> AsRef<str> for TokenValue<'s> {
             TokenValue::Operator(value) => value,
             TokenValue::StatementDelimiter(value) => value,
             TokenValue::NumericConstant(value) => value,
+            TokenValue::IdentifierOrKeyword(value) => value,
             TokenValue::Fragment(_) => {
                 panic!("TokenValue::Fragment does not contain a single &str")
             }
@@ -142,6 +150,10 @@ impl<'s> Token<'s> {
         }
     }
 
+    pub fn is_identifier_or_keyword(&self) -> bool {
+        matches!(self.value, TokenValue::IdentifierOrKeyword(_))
+    }
+
     pub fn children(&self) -> Option<&Tokens<'s>> {
         match &self.value {
             TokenValue::Fragment(tokens) => Some(tokens),
@@ -159,6 +171,7 @@ impl<'s> Token<'s> {
             TokenValue::StatementDelimiter(value) => vec![value],
             TokenValue::Operator(value) => vec![value],
             TokenValue::NumericConstant(value) => vec![value],
+            TokenValue::IdentifierOrKeyword(value) => vec![value],
             TokenValue::Fragment(tokens) => tokens.iter().flat_map(|t| t.as_str_array()).collect(),
         }
     }

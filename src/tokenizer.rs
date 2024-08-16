@@ -376,7 +376,7 @@ impl<'s> Tokenizer<'s> {
                 return next_char;
             } else if c == '.' {
                 //
-                // Dot (could be a decimal point or a part of an operator).
+                // Dot (start of a decimal constant (ex: .05), or part of a qualified name (ex: schema.table)).
                 //
                 self.capture_token(tokens, self.offset(), self.offset(), TokenValue::Any);
                 // Check if the next character is a digit to determine if the dot is part of a numeric constant.
@@ -384,11 +384,11 @@ impl<'s> Tokenizer<'s> {
                 if next_char.is_some() && next_char.as_ref().unwrap().is_ascii_digit() {
                     // The dot is part of a numeric constant.
                     next_char = self.capture_numeric_constant(input_iter, "_0123456789.eE+-", tokens);
-                    continue; // `next_char` need to be processed by the tokenizer...
                 } else {
                     // The dot is not part of a numeric constant, we need to capture it as a token.
                     self.capture_token(tokens, self.offset(), self.offset(), TokenValue::Any);
                 }
+                continue; // `next_char` need to be processed by the tokenizer...
             } else if c.is_numeric() {
                 //
                 // Numeric constant.
@@ -419,7 +419,14 @@ impl<'s> Tokenizer<'s> {
                     next_char = self.capture_numeric_constant(input_iter, "_0123456789.eE+-", tokens);
                 }
                 continue; // `next_char` need to be processed by the tokenizer...
-            } else if !c.is_alphabetic() && c != '_' {
+            } else if c.is_alphabetic() || c == '_' {
+                //
+                // Identifier or keyword.
+                //
+                self.capture_token(tokens, self.offset(), self.offset(), TokenValue::Any);
+                next_char = self.capture_identifier_or_keyword(input_iter, tokens);
+                continue; // `next_char` need to be processed by the tokenizer...
+            } else {
                 //
                 // Any other character that is not an underscore or alphabetic will be considered as a boundary
                 // for a token, except for operators.
@@ -575,10 +582,33 @@ impl<'s> Tokenizer<'s> {
             }
             next_char = self.get_next_char(input_iter);
         }
-
         // We reached the end of the numeric constant or the end of the input.
         let end_offset = if next_char.is_some() { self.offset() } else { self.next_offset };
         self.capture_token(tokens, end_offset, end_offset, TokenValue::NumericConstant);
+        next_char
+    }
+
+    /// Capture an identifier or a keyword.
+    ///
+    /// SQL identifiers and key words must begin with a letter (a-z, but also letters with diacritical marks and
+    /// non-Latin letters) or an underscore (_). Subsequent characters in an identifier or key word can be letters,
+    /// underscores, digits (0-9), or dollar signs ($).
+    fn capture_identifier_or_keyword(
+        &mut self,
+        input_iter: &mut std::str::Chars,
+        tokens: &mut Tokens<'s>,
+    ) -> Option<char> {
+        let mut next_char = self.get_next_char(input_iter);
+        while let Some(c) = next_char {
+            if c.is_alphanumeric() || c == '_' || c == '$' {
+                next_char = self.get_next_char(input_iter);
+            } else {
+                break;
+            }
+        }
+        // We reached the end of the identifier or keyword (or the end of the input).
+        let end_offset = if next_char.is_some() { self.offset() } else { self.next_offset };
+        self.capture_token(tokens, end_offset, end_offset, TokenValue::IdentifierOrKeyword);
         next_char
     }
 }
@@ -586,6 +616,21 @@ impl<'s> Tokenizer<'s> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_capture_identifier_or_keyword() {
+        let s: Vec<_> = Tokenizer::new("SELECT g.id, _$$, ID2", ";").collect();
+        let tokens = s[0].tokens();
+        assert_eq!(tokens.as_str_array(), ["SELECT", "g", ".", "id", ",", "_$$", ",", "ID2"]);
+        assert!(tokens[0].is_identifier_or_keyword());
+        assert!(tokens[1].is_identifier_or_keyword());
+        assert!(tokens[2].is_any());
+        assert!(tokens[3].is_identifier_or_keyword());
+        assert!(tokens[4].is_any());
+        assert!(tokens[5].is_identifier_or_keyword());
+        assert!(tokens[6].is_any());
+        assert!(tokens[5].is_identifier_or_keyword());
+    }
 
     #[test]
     fn test_numeric_constant() {
