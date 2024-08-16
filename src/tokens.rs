@@ -1,6 +1,6 @@
 use crate::Position;
 use std::convert::AsRef;
-use std::ops::Index;
+use std::ops::{Deref, DerefMut};
 
 #[derive(Debug)]
 pub enum TokenValue<'s> {
@@ -45,10 +45,10 @@ pub struct Token<'s> {
     /// The value of the token.
     pub value: TokenValue<'s>,
 
-    /// The position of the first character of the token.
+    /// The position of the token's first character.
     pub start: Position,
 
-    /// The position of last character of the token.
+    /// The position of the token's last character.
     pub end: Position,
 }
 
@@ -115,7 +115,7 @@ impl<'s> Token<'s> {
             TokenValue::Delimited(value) => vec![value],
             TokenValue::StatementDelimiter(value) => vec![value],
             TokenValue::Operator(value) => vec![value],
-            TokenValue::Fragment(tokens) => tokens.tokens.iter().flat_map(|t| t.as_str_array()).collect(),
+            TokenValue::Fragment(tokens) => tokens.iter().flat_map(|t| t.as_str_array()).collect(),
         }
     }
 }
@@ -124,7 +124,7 @@ impl std::fmt::Display for Token<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.value {
             TokenValue::Fragment(tokens) => {
-                for token in &tokens.tokens {
+                for token in tokens.iter() {
                     write!(f, "{}", token)?;
                 }
                 Ok(())
@@ -134,14 +134,19 @@ impl std::fmt::Display for Token<'_> {
     }
 }
 
-/// A list of tokens.
-#[derive(Debug)]
-pub struct Tokens<'s> {
-    pub tokens: Vec<Token<'s>>,
-}
+/// A collection of tokens.
+#[derive(Debug, Default)]
+pub struct Tokens<'s>(Vec<Token<'s>>);
 
 impl<'s> Tokens<'s> {
+    /// Create a new empty Tokens collection.
+    pub fn new() -> Self {
+        Tokens(Vec::new())
+    }
+
     /// Returns the tokens as a string array.
+    ///
+    /// # Examples
     /// ```rust
     /// use loose_sqlparser::loose_sqlparse;
     /// let stmt = loose_sqlparse("SELECT 1, 2").next().unwrap();
@@ -149,36 +154,22 @@ impl<'s> Tokens<'s> {
     /// assert_eq!(tokens.as_str_array(), &["SELECT", "1", ",", "2"]);
     /// ```
     pub fn as_str_array(&self) -> Vec<&str> {
-        self.tokens.iter().flat_map(|t| t.as_str_array()).collect()
-    }
-
-    /// Returns the number of token in the list.
-    pub fn len(&self) -> usize {
-        self.tokens.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.tokens.is_empty()
-    }
-
-    pub fn first(&self) -> Option<&Token<'s>> {
-        self.tokens.first()
-    }
-
-    pub fn last(&self) -> Option<&Token<'s>> {
-        self.tokens.last()
+        self.iter().flat_map(|t| t.as_str_array()).collect()
     }
 }
 
-/// Accessing tokens by index.
-impl<'s> Index<usize> for Tokens<'s> {
-    type Output = Token<'s>;
+// Implement Deref to delegate method calls to the inner Vec<Token<'s>>
+impl<'s> Deref for Tokens<'s> {
+    type Target = Vec<Token<'s>>;
 
-    /// Returns the token at the given index.
-    ///
-    /// # Panics
-    /// This function panics if the index is out of bounds.
-    fn index(&self, index: usize) -> &Self::Output {
-        &self.tokens[index]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+// Implement DerefMut to allow mutable access to the inner Vec<Token<'s>>
+impl<'s> DerefMut for Tokens<'s> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }

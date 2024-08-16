@@ -1,5 +1,5 @@
-use crate::tokens::{Token, TokenValue, Tokens};
-use crate::{Position, SqlStatement};
+use crate::{Position, Statement};
+use crate::{Token, TokenValue, Tokens};
 
 // The list of all operators supported by the tokenizer.
 // The tokenizer will try to match the longest operator possible, so that list must be sorted by the length descending.
@@ -29,7 +29,7 @@ pub(crate) struct Tokenizer<'s> {
 }
 
 impl<'s> Iterator for Tokenizer<'s> {
-    type Item = SqlStatement<'s>;
+    type Item = Statement<'s>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.next_offset >= self.input.len() {
@@ -114,7 +114,7 @@ impl<'s> Tokenizer<'s> {
             self.token_start.clone(),
             Position { line: self.line, column: self.column_from_offset(end_offset - 1), offset: end_offset },
         );
-        tokens.tokens.push(token);
+        tokens.push(token);
         self.token_start.offset = next_token_offset;
         self.token_start.line = self.line;
         self.token_start.column = self.column_from_offset(next_token_offset);
@@ -353,7 +353,7 @@ impl<'s> Tokenizer<'s> {
                 self.capture_token(tokens, self.offset(), self.offset(), TokenValue::Any);
                 // Capture the parentheses as a token.
                 self.capture_token(tokens, self.next_offset, self.next_offset, TokenValue::Any);
-                let mut nested_tokens: Tokens = Tokens { tokens: Vec::new() };
+                let mut nested_tokens = Tokens::new();
                 next_char = self.capture_fragment(input_iter, delimiter, &mut nested_tokens);
                 self.add_token(TokenValue::Fragment(nested_tokens), self.offset(), self.offset(), tokens);
                 // We cannot assume the next character is the end of the parentheses block because we could have
@@ -468,9 +468,9 @@ impl<'s> Tokenizer<'s> {
 
     // Get the next statement from the input.
     // The end of the next statement is determined by the delimiter provided or the end of the input.
-    fn get_next_statement(&mut self, input_iter: &mut std::str::Chars, delimiter: &str) -> Option<SqlStatement<'s>> {
+    fn get_next_statement(&mut self, input_iter: &mut std::str::Chars, delimiter: &str) -> Option<Statement<'s>> {
         // Capture all tokens until the next semicolon.
-        let mut tokens: Tokens = Tokens { tokens: Vec::new() };
+        let mut tokens = Tokens::new();
 
         // Under normal circumstances, the tokenizer will either return None if the input is empty or the first
         // character if the delimiter if found.
@@ -495,7 +495,7 @@ impl<'s> Tokenizer<'s> {
         match tokens.is_empty() {
             // We reached the end of the input without finding any token.
             true => None,
-            false => Some(SqlStatement { input: self.input, tokens }),
+            false => Some(Statement { input: self.input, tokens }),
         }
     }
 }

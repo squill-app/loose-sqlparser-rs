@@ -1,7 +1,7 @@
 use crate::{tokens::Tokens, Position};
 
 #[derive(Debug)]
-pub struct SqlStatement<'s> {
+pub struct Statement<'s> {
     // The input from which the statement was parsed.
     pub(crate) input: &'s str,
 
@@ -9,7 +9,7 @@ pub struct SqlStatement<'s> {
     pub(crate) tokens: Tokens<'s>,
 }
 
-impl SqlStatement<'_> {
+impl Statement<'_> {
     /// The SQL statement.
     pub fn sql(&self) -> &str {
         return &self.input[self.start().offset..self.end().offset];
@@ -44,7 +44,7 @@ impl SqlStatement<'_> {
     ///
     /// An empty statement is a statement that contains nothing else that comments or whitespace.
     pub fn is_empty(&self) -> bool {
-        self.tokens.tokens.iter().all(|t| t.is_comment() || t.is_statement_delimiter())
+        self.tokens.iter().all(|t| t.is_comment() || t.is_statement_delimiter())
     }
 
     /// Returns whether the statement is a query or a command.

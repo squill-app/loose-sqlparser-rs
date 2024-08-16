@@ -22,7 +22,7 @@ fn main() {
 }
 
 fn display_tokens(tokens: &Tokens, col_width: usize, indent: usize) {
-    for token in &tokens.tokens {
+    for token in tokens.iter() {
         if token.is_fragment() {
             display_tokens(token.children().unwrap(), col_width, indent + 2);
             continue;
