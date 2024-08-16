@@ -1,5 +1,6 @@
 use crate::{tokens::Tokens, Position};
 
+#[derive(Debug)]
 pub struct SqlStatement<'s> {
     // The input from which the statement was parsed.
     pub(crate) input: &'s str,
@@ -61,6 +62,9 @@ impl SqlStatement<'_> {
     /// - INSERT|UPDATE|DELETE ... RETURNING ...
     pub fn is_query(&self) -> bool {
         let keywords = self.keywords();
+        if keywords.is_empty() {
+            return false;
+        }
         // 1. The statement starts with a keyword that is unambiguously a query.
         (matches!(keywords[0].to_uppercase().as_str(),
             "SHOW" | "DESCRIBE" | "EXPLAIN" | "VALUES" | "LIST" | "PRAGMA"))
@@ -72,7 +76,7 @@ impl SqlStatement<'_> {
                 && keywords.iter().any(|&k| k.to_uppercase().as_str() == "RETURNING"))
         // 4. The statement is a SELECT (except SELECT ... INTO).
             || (keywords[0].to_uppercase() == "SELECT"
-                && keywords.iter().any(|&k| k.to_uppercase().as_str() == "INTO"))
+                && !keywords.iter().any(|&k| k.to_uppercase().as_str() == "INTO"))
     }
 }
 

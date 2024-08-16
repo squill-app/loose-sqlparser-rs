@@ -14,3 +14,11 @@ use loose_sqlparser::loose_sqlparse;
 
 let statements: Vec<_> = loose_sqlparse("SELECT 1;SELECT 2").collect();
 ```
+
+## Example
+
+You can use the `cli` example to play with the parser and test it capabilities and limitations:
+
+```bash
+$ cargo run --example cli FILENAME.sql
+```

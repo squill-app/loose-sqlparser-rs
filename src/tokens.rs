@@ -1,4 +1,5 @@
 use crate::Position;
+use std::convert::AsRef;
 use std::ops::Index;
 
 #[derive(Debug)]
@@ -23,9 +24,25 @@ pub enum TokenValue<'s> {
     Fragment(Tokens<'s>),
 }
 
+impl<'s> AsRef<str> for TokenValue<'s> {
+    fn as_ref(&self) -> &str {
+        match self {
+            TokenValue::Any(value) => value,
+            TokenValue::Comment(value) => value,
+            TokenValue::Quoted(value) => value,
+            TokenValue::Delimited(value) => value,
+            TokenValue::Operator(value) => value,
+            TokenValue::StatementDelimiter(value) => value,
+            TokenValue::Fragment(_) => {
+                panic!("TokenValue::Fragment does not contain a single &str")
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Token<'s> {
-    value: TokenValue<'s>,
+    pub value: TokenValue<'s>,
     pub start: Position,
     pub end: Position,
 }
@@ -105,6 +122,20 @@ impl<'s> Token<'s> {
             TokenValue::StatementDelimiter(value) => vec![value],
             TokenValue::Operator(value) => vec![value],
             TokenValue::Fragment(tokens) => tokens.tokens.iter().flat_map(|t| t.as_str_array()).collect(),
+        }
+    }
+}
+
+impl std::fmt::Display for Token<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.value {
+            TokenValue::Fragment(tokens) => {
+                for token in &tokens.tokens {
+                    write!(f, "{}", token)?;
+                }
+                Ok(())
+            }
+            _ => write!(f, "{}", self.value.as_ref()),
         }
     }
 }
