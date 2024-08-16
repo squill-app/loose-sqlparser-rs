@@ -11,10 +11,10 @@ pub enum TokenValue<'s> {
 
     /// An operator
     ///
-    /// Arithmetic operators: `+`, `-`, `*`, `/`, `=`, `!=`, `>`, `<`, `>=`, `<=`, `<>`, `||`, `!`, `%`
-    /// Bitwise operators: `~`, `&`, `|`, `<<`, `>>`, `^`
-    /// PostgreSQL typecast operator: `::`
-    /// Regular expression operators: `~`, `~*`, `!~`, `!~*`
+    /// - Arithmetic operators: `+`, `-`, `*`, `/`, `=`, `!=`, `>`, `<`, `>=`, `<=`, `<>`, `||`, `!`, `%`
+    /// - Bitwise operators: `~`, `&`, `|`, `<<`, `>>`, `^`
+    /// - PostgreSQL typecast operator: `::`
+    /// - Regular expression operators: `~`, `~*`, `!~`, `!~*`
     Operator(&'s str),
 
     /// A statement delimiter such as `;`.
@@ -42,26 +42,19 @@ impl<'s> AsRef<str> for TokenValue<'s> {
 
 #[derive(Debug)]
 pub struct Token<'s> {
+    /// The value of the token.
     pub value: TokenValue<'s>,
+
+    /// The position of the first character of the token.
     pub start: Position,
+
+    /// The position of last character of the token.
     pub end: Position,
 }
 
 impl<'s> Token<'s> {
-    pub fn new(
-        value: TokenValue<'s>,
-        start_offset: usize,
-        end_offset: usize,
-        start_line: usize,
-        start_column: usize,
-        end_line: usize,
-        end_column: usize,
-    ) -> Self {
-        Self {
-            value,
-            start: Position { line: start_line, column: start_column, offset: start_offset },
-            end: Position { line: end_line, column: end_column, offset: end_offset },
-        }
+    pub fn new(value: TokenValue<'s>, start: Position, end: Position) -> Self {
+        Self { value, start, end }
     }
 
     pub fn is_any(&self) -> bool {
@@ -113,6 +106,7 @@ impl<'s> Token<'s> {
         }
     }
 
+    /// Return the token value as a string array.
     pub fn as_str_array(&self) -> Vec<&str> {
         match &self.value {
             TokenValue::Any(value) => vec![value],
@@ -140,16 +134,25 @@ impl std::fmt::Display for Token<'_> {
     }
 }
 
+/// A list of tokens.
 #[derive(Debug)]
 pub struct Tokens<'s> {
     pub tokens: Vec<Token<'s>>,
 }
 
 impl<'s> Tokens<'s> {
+    /// Returns the tokens as a string array.
+    /// ```rust
+    /// use loose_sqlparser::loose_sqlparse;
+    /// let stmt = loose_sqlparse("SELECT 1, 2").next().unwrap();
+    /// let tokens = stmt.tokens();
+    /// assert_eq!(tokens.as_str_array(), &["SELECT", "1", ",", "2"]);
+    /// ```
     pub fn as_str_array(&self) -> Vec<&str> {
         self.tokens.iter().flat_map(|t| t.as_str_array()).collect()
     }
 
+    /// Returns the number of token in the list.
     pub fn len(&self) -> usize {
         self.tokens.len()
     }

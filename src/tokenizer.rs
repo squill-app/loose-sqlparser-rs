@@ -1,5 +1,5 @@
 use crate::tokens::{Token, TokenValue, Tokens};
-use crate::SqlStatement;
+use crate::{Position, SqlStatement};
 
 // The list of all operators supported by the tokenizer.
 // The tokenizer will try to match the longest operator possible, so that list must be sorted by the length descending.
@@ -11,19 +11,20 @@ const OPERATORS: [&str; 24] = [
 pub(crate) struct Tokenizer<'s> {
     input: &'s str,
 
-    /// The offset of the next character to be read from the input
+    // The offset of the next character to be read from the input
+    // To get the current character, use `self.offset()`.
     next_offset: usize,
 
-    /// The current line of the tokenizer.
+    // The current line of the tokenizer ()
     line: usize,
 
-    /// The current column of the tokenizer.
+    // The current column of the tokenizer.
     column: usize,
 
-    /// The offset of the start of the token currently being scanned.
-    token_start_offset: usize,
+    // The start position of the next token to be captured.
+    token_start: Position,
 
-    /// The SQL delimiter used to separate statements.
+    // The SQL delimiter used to separate statements.
     delimiter: &'s str,
 }
 
@@ -43,7 +44,14 @@ impl<'s> Iterator for Tokenizer<'s> {
 
 impl<'s> Tokenizer<'s> {
     pub(crate) fn new(input: &'s str, delimiter: &'s str) -> Self {
-        Tokenizer { input, next_offset: 0, line: 1, column: 1, token_start_offset: 0, delimiter }
+        Tokenizer {
+            input,
+            next_offset: 0,
+            line: 1,
+            column: 0,
+            token_start: { Position { line: 1, column: 1, offset: 0 } },
+            delimiter,
+        }
     }
 
     // The current offset of the tokenizer.
@@ -79,6 +87,16 @@ impl<'s> Tokenizer<'s> {
         true
     }
 
+    // Get the column number from an offset.
+    // The given `offset` is expected to be on the same line as the tokenizer is currently positioned.
+    #[inline]
+    fn column_from_offset(&mut self, offset: usize) -> usize {
+        let adjustment = offset as i64 - self.offset() as i64;
+        (self.column as i64 + adjustment) as usize
+    }
+
+    // Add a token to a list of tokens.
+    //
     fn add_token(
         &mut self,
         token_value: TokenValue<'s>,
@@ -86,16 +104,20 @@ impl<'s> Tokenizer<'s> {
         next_token_offset: usize,
         tokens: &mut Tokens<'s>,
     ) {
-        tokens.tokens.push(Token::new(
+        // The `end_offset` is the offset following the last character of the token, so if `end_offset` is not equals to
+        // `self.offset()`, its means the tokenizer is not currently positioned at the end of the token and `self.column`
+        // cannot be used as is but must be adjusted because `self.column` is in sync with `self.offset()`.
+        // The `line` does not need to be adjusted because the tokenizer is not expected to call this function when
+        // positioned on a different line than the `self.line`.
+        let token = Token::new(
             token_value,
-            self.token_start_offset,
-            end_offset,
-            self.line,
-            self.column,
-            self.line,
-            self.column,
-        ));
-        self.token_start_offset = next_token_offset;
+            self.token_start.clone(),
+            Position { line: self.line, column: self.column_from_offset(end_offset - 1), offset: end_offset },
+        );
+        tokens.tokens.push(token);
+        self.token_start.offset = next_token_offset;
+        self.token_start.line = self.line;
+        self.token_start.column = self.column_from_offset(next_token_offset);
     }
 
     // Capture the current token.
@@ -109,11 +131,12 @@ impl<'s> Tokenizer<'s> {
         next_token_offset: usize,
         value_constructor: impl Fn(&'s str) -> T,
     ) {
-        if end_offset > self.token_start_offset {
-            let value = value_constructor(&self.input[self.token_start_offset..end_offset]).into();
+        if end_offset > self.token_start.offset {
+            let value = value_constructor(&self.input[self.token_start.offset..end_offset]).into();
             self.add_token(value, end_offset, next_token_offset, tokens);
         } else {
-            self.token_start_offset = next_token_offset;
+            self.token_start.offset = next_token_offset;
+            self.token_start.column = self.column_from_offset(next_token_offset);
         }
     }
 
@@ -257,7 +280,9 @@ impl<'s> Tokenizer<'s> {
                 //
                 self.capture_token(tokens, self.offset(), self.next_offset, TokenValue::Any);
                 self.line += 1;
-                self.column = 1;
+                self.column = 0;
+                self.token_start.line = self.line;
+                self.token_start.column = 1;
             } else if c == '\r' {
                 //
                 // Carriage Return (ignored).
@@ -316,7 +341,7 @@ impl<'s> Tokenizer<'s> {
                 }
                 if next_char.as_ref() == Some(&'$') {
                     // We found the end of the dollar-quoted delimiter.
-                    let delimiter = &self.input[self.token_start_offset..self.next_offset];
+                    let delimiter = &self.input[self.token_start.offset..self.next_offset];
                     next_char = self.capture_delimited_token(input_iter, delimiter, tokens);
                 }
                 continue;

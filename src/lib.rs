@@ -1,13 +1,26 @@
 #![doc = include_str!("../README.md")]
-pub mod statement;
-mod tokenizer;
-pub mod tokens;
 
-use statement::SqlStatement;
+mod statement;
+mod tokenizer;
+mod tokens;
+
+// Re-export the public API
+pub use statement::SqlStatement;
+pub use tokens::{Token, TokenValue, Tokens};
+
 use tokenizer::Tokenizer;
 
-/// Represents a position in the input string.
-#[derive(Debug)]
+/// Represents a position in the input string given to the parser.
+///
+/// ```rust
+/// use loose_sqlparser::loose_sqlparse;
+/// let stmt = loose_sqlparse("SELECT 1;\nSELECT 2;").nth(1).unwrap();
+/// assert_eq!(stmt.sql(), "SELECT 2;");
+/// assert_eq!(stmt.start().line, 2);
+/// assert_eq!(stmt.start().column, 1);
+/// assert_eq!(stmt.start().offset, 10);
+/// ```
+#[derive(Debug, Clone)]
 pub struct Position {
     /// Line number (1-based).
     pub line: usize,
@@ -16,7 +29,7 @@ pub struct Position {
     pub column: usize,
 
     /// Offset in the input string (0-based)
-    /// The offset is the number of characters (not bytes) from the start.
+    /// The offset is the number of characters (not bytes) from the start of the first character of the token.
     pub offset: usize,
 }
 
