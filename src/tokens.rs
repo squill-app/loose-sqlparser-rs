@@ -9,6 +9,44 @@ pub enum TokenValue<'s> {
     Quoted(&'s str),
     Delimited(&'s str),
 
+    /// A Numeric Constant
+    ///
+    /// - A numeric constant is a sequence of digits with an optional decimal point and an optional exponent.
+    ///   ```text
+    ///   digits
+    ///   digits.[digits][e[+-]digits]
+    ///   [digits].digits[e[+-]digits]
+    ///   digitse[+-]digits
+    ///   ```
+    /// - Hexadecimal constants (`0xhexdigits`).
+    /// - Binary constants (`0b01`).
+    /// - Octal constants (`0o01234567`).
+    ///
+    /// For visual grouping, underscores can be inserted between digits (e.g. `1_000_000`).
+    ///
+    /// Examples:
+    ///
+    /// ```sql
+    /// 42
+    /// 3.5
+    /// 4.
+    /// .001
+    /// 5e2
+    /// 1.925e-3
+    /// 0b100101
+    /// 0B10011001
+    /// 0o273
+    /// 0O755
+    /// 0x42f
+    /// 0XFFFF
+    /// 1_500_000_000
+    /// 0b10001000_00000000
+    /// 0o_1_755
+    /// 0xFFFF_FFFF
+    /// 1.618_034
+    /// ```
+    NumericConstant(&'s str),
+
     /// An operator
     ///
     /// - Arithmetic operators: `+`, `-`, `*`, `/`, `=`, `!=`, `>`, `<`, `>=`, `<=`, `<>`, `||`, `!`, `%`
@@ -33,6 +71,7 @@ impl<'s> AsRef<str> for TokenValue<'s> {
             TokenValue::Delimited(value) => value,
             TokenValue::Operator(value) => value,
             TokenValue::StatementDelimiter(value) => value,
+            TokenValue::NumericConstant(value) => value,
             TokenValue::Fragment(_) => {
                 panic!("TokenValue::Fragment does not contain a single &str")
             }
@@ -59,6 +98,10 @@ impl<'s> Token<'s> {
 
     pub fn is_any(&self) -> bool {
         matches!(self.value, TokenValue::Any(_))
+    }
+
+    pub fn is_numeric_constant(&self) -> bool {
+        matches!(self.value, TokenValue::NumericConstant(_))
     }
 
     pub fn is_comment(&self) -> bool {
@@ -115,6 +158,7 @@ impl<'s> Token<'s> {
             TokenValue::Delimited(value) => vec![value],
             TokenValue::StatementDelimiter(value) => vec![value],
             TokenValue::Operator(value) => vec![value],
+            TokenValue::NumericConstant(value) => vec![value],
             TokenValue::Fragment(tokens) => tokens.iter().flat_map(|t| t.as_str_array()).collect(),
         }
     }

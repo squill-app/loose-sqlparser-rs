@@ -253,11 +253,11 @@ impl<'s> Tokenizer<'s> {
         self.remaining_input().starts_with(delimiter)
     }
 
-    // Skip n characters from the iterator.
+    // Move an iterator n characters forward.
     // That function is expecting that the iterator contains at least n more characters and there are no new lines
     // skipped.
     #[inline]
-    fn skip(&mut self, input_iter: &mut std::str::Chars, n: usize) {
+    fn forward_iter(&mut self, input_iter: &mut std::str::Chars, n: usize) {
         if n > 0 {
             input_iter.nth(n - 1);
             self.next_offset += n;
@@ -374,9 +374,54 @@ impl<'s> Tokenizer<'s> {
                 // Then we return to the caller so it can capture the end parenthesis as a token in the same fragment
                 // level as the opening parenthesis.
                 return next_char;
-            } else if !c.is_alphanumeric() && c != '_' {
+            } else if c == '.' {
                 //
-                // Any other character that is not an underscore or alphanumeric will be considered as a boundary
+                // Dot (could be a decimal point or a part of an operator).
+                //
+                self.capture_token(tokens, self.offset(), self.offset(), TokenValue::Any);
+                // Check if the next character is a digit to determine if the dot is part of a numeric constant.
+                next_char = self.get_next_char(input_iter);
+                if next_char.is_some() && next_char.as_ref().unwrap().is_ascii_digit() {
+                    // The dot is part of a numeric constant.
+                    next_char = self.capture_numeric_constant(input_iter, "_0123456789.eE+-", tokens);
+                    continue; // `next_char` need to be processed by the tokenizer...
+                } else {
+                    // The dot is not part of a numeric constant, we need to capture it as a token.
+                    self.capture_token(tokens, self.offset(), self.offset(), TokenValue::Any);
+                }
+            } else if c.is_numeric() {
+                //
+                // Numeric constant.
+                //
+                self.capture_token(tokens, self.offset(), self.offset(), TokenValue::Any);
+                if c == '0' {
+                    // Check the next character to determine the type of numeric constant.
+                    next_char = self.get_next_char(input_iter);
+                    if next_char.as_ref() == Some(&'x') || next_char.as_ref() == Some(&'X') {
+                        // hexadecimal constant.
+                        next_char = self.capture_numeric_constant(input_iter, "_0123456789abcdefABCDEF", tokens);
+                    } else if next_char.as_ref() == Some(&'o') || next_char.as_ref() == Some(&'O') {
+                        // Octal constant.
+                        next_char = self.capture_numeric_constant(input_iter, "_01234567", tokens);
+                    } else if next_char.as_ref() == Some(&'b') || next_char.as_ref() == Some(&'B') {
+                        // Binary constant.
+                        next_char = self.capture_numeric_constant(input_iter, "_01", tokens);
+                    } else if next_char.is_some()
+                        && (next_char.as_ref() == Some(&'.') || next_char.as_ref().unwrap().is_ascii_digit())
+                    {
+                        // Decimal constant.
+                        next_char = self.capture_numeric_constant(input_iter, "_0123456789.eE+-", tokens);
+                    } else {
+                        // We found a single zero, we need to capture it as a numeric constant.
+                        self.capture_token(tokens, self.offset(), self.offset(), TokenValue::NumericConstant);
+                    }
+                } else {
+                    next_char = self.capture_numeric_constant(input_iter, "_0123456789.eE+-", tokens);
+                }
+                continue; // `next_char` need to be processed by the tokenizer...
+            } else if !c.is_alphabetic() && c != '_' {
+                //
+                // Any other character that is not an underscore or alphabetic will be considered as a boundary
                 // for a token, except for operators.
                 //
                 if !self.try_capture_operator(input_iter, tokens) {
@@ -409,7 +454,7 @@ impl<'s> Tokenizer<'s> {
             // Capture the operator
             self.capture_token(tokens, self.offset() + op.len(), self.offset() + op.len(), TokenValue::Operator);
             // We need to move the iterator to the end of the operator.
-            self.skip(input_iter, op.len() - 1);
+            self.forward_iter(input_iter, op.len() - 1);
             true
         } else {
             false
@@ -452,7 +497,7 @@ impl<'s> Tokenizer<'s> {
                         TokenValue::Delimited,
                     );
                     // We return the next character to the tokenizer so it can be processed.
-                    self.skip(input_iter, delimiter.len() - 1);
+                    self.forward_iter(input_iter, delimiter.len() - 1);
                     return self.get_next_char(input_iter);
                 }
             } else {
@@ -481,7 +526,7 @@ impl<'s> Tokenizer<'s> {
             if self.check_delimiter(delimiter) {
                 // The delimiter was found but not captured as a token, we need to capture it now.
                 // Moving forward the iterator until the end of the delimiter.
-                self.skip(input_iter, delimiter.len() - 1);
+                self.forward_iter(input_iter, delimiter.len() - 1);
                 self.capture_token(&mut tokens, self.next_offset, self.next_offset, TokenValue::StatementDelimiter);
                 break;
             } else {
@@ -498,6 +543,44 @@ impl<'s> Tokenizer<'s> {
             false => Some(Statement { input: self.input, tokens }),
         }
     }
+
+    // Capture a Numeric Constants
+    //
+    // The numeric constant will be captured until we reach any character that is not in the provided `allowed_chars`.
+    // `+` and `-` are allowed only if the previous character is `e` (exponential notation: `digits.[digits][e[+-]digits]`),
+    // a leading `+` or `-` is not captured as a sign of the numeric constant but as an operator.
+    fn capture_numeric_constant(
+        &mut self,
+        input_iter: &mut std::str::Chars,
+        allowed_chars: &str,
+        tokens: &mut Tokens<'s>,
+    ) -> Option<char> {
+        let mut next_char = self.get_next_char(input_iter);
+        while let Some(c) = next_char {
+            if !allowed_chars.contains(c) {
+                break;
+            } else if c == 'e' || c == 'E' {
+                // Check if the next character is a sign (+ or -) or a digit to allow exponential notation.
+                next_char = self.get_next_char(input_iter);
+                if next_char.is_none()
+                    || (next_char.as_ref() != Some(&'+')
+                        && next_char.as_ref() != Some(&'-')
+                        && !next_char.as_ref().unwrap().is_ascii_digit())
+                {
+                    break;
+                }
+            } else if c == '+' || c == '-' {
+                // Only allowed as the sign of the exponent which should have been captured by the previous condition.
+                break;
+            }
+            next_char = self.get_next_char(input_iter);
+        }
+
+        // We reached the end of the numeric constant or the end of the input.
+        let end_offset = if next_char.is_some() { self.offset() } else { self.next_offset };
+        self.capture_token(tokens, end_offset, end_offset, TokenValue::NumericConstant);
+        next_char
+    }
 }
 
 #[cfg(test)]
@@ -505,10 +588,50 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_numeric_constant() {
+        let expected: Vec<&str> = vec![
+            "0",
+            "1",
+            "42",
+            "3.5",
+            "4.",
+            ".001",
+            "5e2",
+            "1.925e-3",
+            "0b100101",
+            "0B10011001",
+            "0o273",
+            "0O755",
+            "0x42f",
+            "0XFFFF",
+            "1_500_000_000",
+            "0b10001000_00000000",
+            "0o_1_755",
+            "0xFFFF_FFFF",
+            "1.618_034",
+        ];
+        let expected_string = expected.join(" ");
+        let s: Vec<_> = Tokenizer::new(&expected_string, ";").collect();
+        let tokens = s[0].tokens();
+        assert_eq!(tokens.as_str_array(), expected);
+        for token in tokens.iter() {
+            assert!(token.is_numeric_constant());
+        }
+
+        // The tokenizer should not capture the +/- as part of the numeric constant if not part of the exponential
+        // notation.
+        let s: Vec<_> = Tokenizer::new("1.925e-3+1 1.618_034+1 0b100101+1 0o273+1 0x42f+1", ";").collect();
+        assert_eq!(
+            s[0].tokens().as_str_array(),
+            ["1.925e-3", "+", "1", "1.618_034", "+", "1", "0b100101", "+", "1", "0o273", "+", "1", "0x42f", "+", "1"]
+        );
+    }
+
+    #[test]
     fn test_comma() {
         let s: Vec<_> = Tokenizer::new("1, 2, /* , */", ";").collect();
         let tokens = s[0].tokens();
-        assert_eq!(tokens.as_str_array(), &["1", ",", "2", ",", "/* , */"]);
+        assert_eq!(tokens.as_str_array(), ["1", ",", "2", ",", "/* , */"]);
         assert!(tokens[1].is_comma());
         assert!(tokens[3].is_comma());
     }
@@ -519,7 +642,7 @@ mod tests {
         let tokens = s[0].tokens();
         assert_eq!(
             tokens.as_str_array(),
-            &["1", "+", "2", "+", "3", "-", "4", "-", "5", "*", "6", "*", "7", "/", "8", "/", "9"]
+            ["1", "+", "2", "+", "3", "-", "4", "-", "5", "*", "6", "*", "7", "/", "8", "/", "9"]
         );
     }
 
@@ -528,27 +651,27 @@ mod tests {
         // A missing opening parenthesis should not stop the tokenizer when reaching a closing parenthesis.
         let s: Vec<_> = Tokenizer::new("SELECT 1 + 2) + 3; SELECT 2", ";").collect();
         assert!(s.len() == 2);
-        assert_eq!(s[0].tokens().as_str_array(), &["SELECT", "1", "+", "2", ")", "+", "3", ";"]);
+        assert_eq!(s[0].tokens().as_str_array(), ["SELECT", "1", "+", "2", ")", "+", "3", ";"]);
         assert!(s[0].tokens().last().unwrap().is_statement_delimiter());
-        assert_eq!(s[1].tokens().as_str_array(), &["SELECT", "2"]);
+        assert_eq!(s[1].tokens().as_str_array(), ["SELECT", "2"]);
 
         let s: Vec<_> = Tokenizer::new("SELECT (1 + 2) * 3", ";").collect();
         let tokens = s[0].tokens();
-        assert_eq!(tokens.as_str_array(), &["SELECT", "(", "1", "+", "2", ")", "*", "3"]);
+        assert_eq!(tokens.as_str_array(), ["SELECT", "(", "1", "+", "2", ")", "*", "3"]);
         assert!(tokens[1].is_parenthesis());
         assert!(tokens[2].is_fragment());
         assert!(tokens[3].is_parenthesis());
 
         let s: Vec<_> = Tokenizer::new("SELECT ((1+2)*(3*4))", ";").collect();
         let tokens = s[0].tokens();
-        assert_eq!(tokens.as_str_array(), &["SELECT", "(", "(", "1", "+", "2", ")", "*", "(", "3", "*", "4", ")", ")"]);
+        assert_eq!(tokens.as_str_array(), ["SELECT", "(", "(", "1", "+", "2", ")", "*", "(", "3", "*", "4", ")", ")"]);
 
         // A missing closing parenthesis should not prevent the tokenizer to stop when reaching the statement delimiter.
         let s: Vec<_> = Tokenizer::new("SELECT (1 + 2 + 3; SELECT 2", ";").collect();
         assert!(s.len() == 2);
-        assert_eq!(s[0].tokens().as_str_array(), &["SELECT", "(", "1", "+", "2", "+", "3", ";"]);
+        assert_eq!(s[0].tokens().as_str_array(), ["SELECT", "(", "1", "+", "2", "+", "3", ";"]);
         assert!(s[0].tokens().last().unwrap().is_statement_delimiter());
-        assert_eq!(s[1].tokens().as_str_array(), &["SELECT", "2"]);
+        assert_eq!(s[1].tokens().as_str_array(), ["SELECT", "2"]);
     }
 
     #[test]
@@ -557,7 +680,7 @@ mod tests {
         let tokens = s[0].tokens();
         assert_eq!(
             tokens.as_str_array(),
-            &["BEGIN", "$$O'Reilly$$", ",", "$tag$with_tag$tag$", ",", "$x$__$__$x$", "END"]
+            ["BEGIN", "$$O'Reilly$$", ",", "$tag$with_tag$tag$", ",", "$x$__$__$x$", "END"]
         );
         assert!(tokens[1].is_delimited());
         assert!(tokens[3].is_delimited());
@@ -565,24 +688,21 @@ mod tests {
     }
 
     #[test]
-    fn test_multi_line_comments() {
+    fn test_multi_line_comment() {
         let s: Vec<_> =
             Tokenizer::new("/* /*nested*/comment */ /** line\n *  break\n **/ /* not closed...", ";").collect();
         let tokens = s[0].tokens();
-        assert_eq!(
-            tokens.as_str_array(),
-            &["/* /*nested*/comment */", "/** line\n *  break\n **/", "/* not closed..."]
-        );
+        assert_eq!(tokens.as_str_array(), ["/* /*nested*/comment */", "/** line\n *  break\n **/", "/* not closed..."]);
         assert!(tokens[0].is_comment());
         assert!(tokens[1].is_comment());
         assert!(tokens[2].is_comment());
     }
 
     #[test]
-    fn test_single_line_comments() {
+    fn test_single_line_comment() {
         let s: Vec<_> = Tokenizer::new("-- comment\n# comment\n# comment", ";").collect();
         let tokens = s[0].tokens();
-        assert_eq!(tokens.as_str_array(), &["-- comment", "# comment", "# comment"]);
+        assert_eq!(tokens.as_str_array(), ["-- comment", "# comment", "# comment"]);
         assert!(tokens[0].is_comment());
         assert!(tokens[1].is_comment());
         assert!(tokens[2].is_comment());
@@ -592,7 +712,7 @@ mod tests {
     fn test_quoted_token() {
         let s: Vec<_> = Tokenizer::new(r#"'' "ID" "ID ""X""" '''' 'O''Reilly' "#, ";").collect();
         let tokens = s[0].tokens();
-        assert_eq!(tokens.as_str_array(), &["''", r#""ID""#, r#""ID ""X""""#, "''''", "'O''Reilly'"]);
+        assert_eq!(tokens.as_str_array(), ["''", r#""ID""#, r#""ID ""X""""#, "''''", "'O''Reilly'"]);
         assert!(tokens[1].is_quoted());
         assert!(tokens[2].is_quoted());
     }
