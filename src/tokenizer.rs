@@ -11,8 +11,10 @@ const OPERATORS: [&str; 24] = [
 pub(crate) struct Tokenizer<'s> {
     input: &'s str,
 
-    // The offset of the next character to be read from the input
-    // To get the current character, use `self.offset()`.
+    // The byte offset of the current character in the input.
+    offset: usize,
+
+    // The byte offset of the next character in the input
     next_offset: usize,
 
     // The current line of the tokenizer ()
@@ -46,6 +48,7 @@ impl<'s> Tokenizer<'s> {
     pub(crate) fn new(input: &'s str, delimiter: &'s str) -> Self {
         Tokenizer {
             input,
+            offset: 0,
             next_offset: 0,
             line: 1,
             column: 0,
@@ -54,17 +57,10 @@ impl<'s> Tokenizer<'s> {
         }
     }
 
-    // The current offset of the tokenizer.
-    // This is the offset of the last character read from the input.
-    #[inline]
-    fn offset(&self) -> usize {
-        self.next_offset - 1
-    }
-
     // The remaining input to be processed by the tokenizer, including the current character.
     #[inline]
     fn remaining_input(&self) -> &str {
-        &self.input[self.offset()..]
+        &self.input[self.offset..]
     }
 
     // Handle the CRLF (Carriage Return + Line Feed) sequence.
@@ -88,15 +84,29 @@ impl<'s> Tokenizer<'s> {
     }
 
     // Get the column number from an offset.
-    // The given `offset` is expected to be on the same line as the tokenizer is currently positioned.
+    //
+    // WARNING: This function is not safe to use if the given `offset` is not on the same line as the current position
+    // (`self.offset` of the tokenizer.
     #[inline]
     fn column_from_offset(&mut self, offset: usize) -> usize {
-        let adjustment = offset as i64 - self.offset() as i64;
-        (self.column as i64 + adjustment) as usize
+        if offset == self.offset {
+            self.column
+        } else {
+            // Because strings can contain multi-byte characters, we need to count the number of characters between the
+            // current position and the given offset.
+            let str = &self.input[std::cmp::min(self.offset, offset)..std::cmp::max(offset, self.offset)];
+            let count = match offset.cmp(&self.offset) {
+                std::cmp::Ordering::Less => -1,
+                _ => 1,
+            } * str.chars().count() as i64;
+            (self.column as i64 + count) as usize
+        }
     }
 
     // Add a token to a list of tokens.
     //
+    // The `end_offset` designated the position of the character immediately following the token. Which means the token
+    // is captured from `self.token_start.offset` to `end_offset - 1`.
     fn add_token(
         &mut self,
         token_value: TokenValue<'s>,
@@ -105,14 +115,14 @@ impl<'s> Tokenizer<'s> {
         tokens: &mut Tokens<'s>,
     ) {
         // The `end_offset` is the offset following the last character of the token, so if `end_offset` is not equals to
-        // `self.offset()`, its means the tokenizer is not currently positioned at the end of the token and `self.column`
-        // cannot be used as is but must be adjusted because `self.column` is in sync with `self.offset()`.
+        // `self.offset`, its means the tokenizer is not currently positioned at the end of the token and `self.column`
+        // cannot be used as is and must be adjusted because `self.column` is in sync with `self.offset`.
         // The `line` does not need to be adjusted because the tokenizer is not expected to call this function when
         // positioned on a different line than the `self.line`.
         let token = Token::new(
             token_value,
             self.token_start.clone(),
-            Position { line: self.line, column: self.column_from_offset(end_offset - 1), offset: end_offset },
+            Position { line: self.line, column: self.column_from_offset(end_offset) - 1, offset: end_offset },
         );
         tokens.push(token);
         self.token_start.offset = next_token_offset;
@@ -147,7 +157,7 @@ impl<'s> Tokenizer<'s> {
         while let Some(c) = self.get_next_char(input_iter) {
             if c == '\n' {
                 // We found the end of the comment.
-                self.capture_token(tokens, self.offset(), self.next_offset, TokenValue::Comment);
+                self.capture_token(tokens, self.offset, self.next_offset, TokenValue::Comment);
                 self.line += 1;
                 self.column = 1;
                 return;
@@ -221,7 +231,7 @@ impl<'s> Tokenizer<'s> {
                 if next_char.as_ref() != Some(&quote_char) {
                     // We found the end of the quoted token.
                     // We return the next character to the tokenizer so it can be processed.
-                    self.capture_token(tokens, self.offset(), self.next_offset, TokenValue::Quoted);
+                    self.capture_token(tokens, self.offset, self.next_offset, TokenValue::Quoted);
                     return next_char;
                 }
             } else {
@@ -241,7 +251,8 @@ impl<'s> Tokenizer<'s> {
     fn get_next_char(&mut self, input_iter: &mut std::str::Chars) -> Option<char> {
         let next_char = input_iter.next();
         if next_char.is_some() {
-            self.next_offset += 1;
+            self.offset = self.next_offset;
+            self.next_offset += next_char.as_ref().unwrap().len_utf8();
             self.column += 1;
         }
         next_char
@@ -278,7 +289,7 @@ impl<'s> Tokenizer<'s> {
                 //
                 // New Line.
                 //
-                self.capture_token(tokens, self.offset(), self.next_offset, TokenValue::Any);
+                self.capture_token(tokens, self.offset, self.next_offset, TokenValue::Any);
                 self.line += 1;
                 self.column = 0;
                 self.token_start.line = self.line;
@@ -287,7 +298,7 @@ impl<'s> Tokenizer<'s> {
                 //
                 // Carriage Return (ignored).
                 //
-                self.capture_token(tokens, self.offset(), self.next_offset, TokenValue::Any);
+                self.capture_token(tokens, self.offset, self.next_offset, TokenValue::Any);
                 self.column -= 1;
             } else if c == delimiter_start_char && self.check_delimiter(delimiter) {
                 //
@@ -296,25 +307,25 @@ impl<'s> Tokenizer<'s> {
                 // Capture the last token before the delimiter and return the next character to the tokenizer so it can
                 // continue the processing of the input starting from the beginning of delimiter (which is returned by
                 // `next_char`).
-                self.capture_token(tokens, self.offset(), self.offset(), TokenValue::Any);
+                self.capture_token(tokens, self.offset, self.offset, TokenValue::Any);
                 return next_char;
             } else if c.is_whitespace() {
                 //
                 // Whitespace (could be \s, \t, \r, \n, etc.).
                 //
-                self.capture_token(tokens, self.offset(), self.next_offset, TokenValue::Any);
+                self.capture_token(tokens, self.offset, self.next_offset, TokenValue::Any);
             } else if c == '#' || (c == '-' && self.check_delimiter("--")) {
                 //
                 // Single-line comment starting by '#' (MySQL).
                 // Single-line comment starting by '--' (most SQL dialects).
                 //
-                self.capture_token(tokens, self.offset(), self.offset(), TokenValue::Any);
+                self.capture_token(tokens, self.offset, self.offset, TokenValue::Any);
                 self.capture_single_line_comment(input_iter, tokens);
             } else if c == '/' && self.check_delimiter("/*") {
                 //
                 // Either a multi-line comment '/* ... */' or a division operator.
                 //
-                self.capture_token(tokens, self.offset(), self.offset(), TokenValue::Any);
+                self.capture_token(tokens, self.offset, self.offset, TokenValue::Any);
                 self.capture_multi_line_comment(input_iter, tokens);
             } else if c == '"' || c == '`' || c == '\'' {
                 //
@@ -327,7 +338,7 @@ impl<'s> Tokenizer<'s> {
                 // May be dollar quoting (PostgreSQL).
                 //
                 // Before starting to identify the dollar-quoted delimiter we need to capture the current token.
-                self.capture_token(tokens, self.offset(), self.offset(), TokenValue::Any);
+                self.capture_token(tokens, self.offset, self.offset, TokenValue::Any);
 
                 // A dollar-quoted delimiter consists of a dollar sign ($), an optional “tag” of zero or more
                 // characters and another dollar sign.
@@ -350,12 +361,12 @@ impl<'s> Tokenizer<'s> {
                 // Start of a parentheses block.
                 //
                 // Capture the previous token if any.
-                self.capture_token(tokens, self.offset(), self.offset(), TokenValue::Any);
+                self.capture_token(tokens, self.offset, self.offset, TokenValue::Any);
                 // Capture the parentheses as a token.
                 self.capture_token(tokens, self.next_offset, self.next_offset, TokenValue::Any);
                 let mut nested_tokens = Tokens::new();
                 next_char = self.capture_fragment(input_iter, delimiter, &mut nested_tokens);
-                self.add_token(TokenValue::Fragment(nested_tokens), self.offset(), self.offset(), tokens);
+                self.add_token(TokenValue::Fragment(nested_tokens), self.offset, self.offset, tokens);
                 // We cannot assume the next character is the end of the parentheses block because we could have
                 // reached the end of the input or the statement delimiter.
                 if next_char.as_ref() == Some(&')') {
@@ -370,7 +381,7 @@ impl<'s> Tokenizer<'s> {
                 // End of a parentheses block.
                 //
                 // Capture the last token before the end parenthesis.
-                self.capture_token(tokens, self.offset(), self.offset(), TokenValue::Any);
+                self.capture_token(tokens, self.offset, self.offset, TokenValue::Any);
                 // Then we return to the caller so it can capture the end parenthesis as a token in the same fragment
                 // level as the opening parenthesis.
                 return next_char;
@@ -378,7 +389,7 @@ impl<'s> Tokenizer<'s> {
                 //
                 // Dot (start of a decimal constant (ex: .05), or part of a qualified name (ex: schema.table)).
                 //
-                self.capture_token(tokens, self.offset(), self.offset(), TokenValue::Any);
+                self.capture_token(tokens, self.offset, self.offset, TokenValue::Any);
                 // Check if the next character is a digit to determine if the dot is part of a numeric constant.
                 next_char = self.get_next_char(input_iter);
                 if next_char.is_some() && next_char.as_ref().unwrap().is_ascii_digit() {
@@ -386,14 +397,14 @@ impl<'s> Tokenizer<'s> {
                     next_char = self.capture_numeric_constant(input_iter, "_0123456789.eE+-", tokens);
                 } else {
                     // The dot is not part of a numeric constant, we need to capture it as a token.
-                    self.capture_token(tokens, self.offset(), self.offset(), TokenValue::Any);
+                    self.capture_token(tokens, self.offset, self.offset, TokenValue::Any);
                 }
                 continue; // `next_char` need to be processed by the tokenizer...
             } else if c.is_numeric() {
                 //
                 // Numeric constant.
                 //
-                self.capture_token(tokens, self.offset(), self.offset(), TokenValue::Any);
+                self.capture_token(tokens, self.offset, self.offset, TokenValue::Any);
                 if c == '0' {
                     // Check the next character to determine the type of numeric constant.
                     next_char = self.get_next_char(input_iter);
@@ -413,7 +424,7 @@ impl<'s> Tokenizer<'s> {
                         next_char = self.capture_numeric_constant(input_iter, "_0123456789.eE+-", tokens);
                     } else {
                         // We found a single zero, we need to capture it as a numeric constant.
-                        self.capture_token(tokens, self.offset(), self.offset(), TokenValue::NumericConstant);
+                        self.capture_token(tokens, self.offset, self.offset, TokenValue::NumericConstant);
                     }
                 } else {
                     next_char = self.capture_numeric_constant(input_iter, "_0123456789.eE+-", tokens);
@@ -423,7 +434,7 @@ impl<'s> Tokenizer<'s> {
                 //
                 // Identifier or keyword.
                 //
-                self.capture_token(tokens, self.offset(), self.offset(), TokenValue::Any);
+                self.capture_token(tokens, self.offset, self.offset, TokenValue::Any);
                 next_char = self.capture_identifier_or_keyword(input_iter, tokens);
                 continue; // `next_char` need to be processed by the tokenizer...
             } else {
@@ -432,14 +443,14 @@ impl<'s> Tokenizer<'s> {
                 // for a token, except for operators.
                 //
                 if !self.try_capture_operator(input_iter, tokens) {
-                    self.capture_token(tokens, self.offset(), self.offset(), TokenValue::Any);
+                    self.capture_token(tokens, self.offset, self.offset, TokenValue::Any);
                 }
             }
             next_char = self.get_next_char(input_iter);
         }
 
         // The delimiter was not found and we reached the end of the input, we need to capture the last token.
-        self.capture_token(tokens, self.next_offset, self.offset(), TokenValue::Any);
+        self.capture_token(tokens, self.next_offset, self.offset, TokenValue::Any);
         next_char
     }
 
@@ -453,13 +464,13 @@ impl<'s> Tokenizer<'s> {
     //
     // Returns true if an operator was found, false otherwise.
     fn try_capture_operator(&mut self, input_iter: &mut std::str::Chars, tokens: &mut Tokens<'s>) -> bool {
-        let remaining_input = &self.input[self.offset()..];
+        let remaining_input = &self.input[self.offset..];
         let operator = OPERATORS.iter().find(|&op| remaining_input.starts_with(op));
         if let Some(op) = operator {
             // We found an operator, we need to capture the current token before the operator.
-            self.capture_token(tokens, self.offset(), self.offset(), TokenValue::Any);
+            self.capture_token(tokens, self.offset, self.offset, TokenValue::Any);
             // Capture the operator
-            self.capture_token(tokens, self.offset() + op.len(), self.offset() + op.len(), TokenValue::Operator);
+            self.capture_token(tokens, self.offset + op.len(), self.offset + op.len(), TokenValue::Operator);
             // We need to move the iterator to the end of the operator.
             self.forward_iter(input_iter, op.len() - 1);
             true
@@ -494,13 +505,13 @@ impl<'s> Tokenizer<'s> {
             if c == delimiter_start_char {
                 // We've found the first character of the delimiter, let check if we have the full delimiter in the
                 // input.
-                let remaining_input = &self.input[self.offset()..];
+                let remaining_input = &self.input[self.offset..];
                 if remaining_input.starts_with(delimiter) {
                     // We found the end of the delimited token.
                     self.capture_token(
                         tokens,
-                        self.offset() + delimiter.len(),
-                        self.offset() + delimiter.len(),
+                        self.offset + delimiter.len(),
+                        self.offset + delimiter.len(),
                         TokenValue::Delimited,
                     );
                     // We return the next character to the tokenizer so it can be processed.
@@ -583,7 +594,7 @@ impl<'s> Tokenizer<'s> {
             next_char = self.get_next_char(input_iter);
         }
         // We reached the end of the numeric constant or the end of the input.
-        let end_offset = if next_char.is_some() { self.offset() } else { self.next_offset };
+        let end_offset = if next_char.is_some() { self.offset } else { self.next_offset };
         self.capture_token(tokens, end_offset, end_offset, TokenValue::NumericConstant);
         next_char
     }
@@ -607,7 +618,7 @@ impl<'s> Tokenizer<'s> {
             }
         }
         // We reached the end of the identifier or keyword (or the end of the input).
-        let end_offset = if next_char.is_some() { self.offset() } else { self.next_offset };
+        let end_offset = if next_char.is_some() { self.offset } else { self.next_offset };
         self.capture_token(tokens, end_offset, end_offset, TokenValue::IdentifierOrKeyword);
         next_char
     }
