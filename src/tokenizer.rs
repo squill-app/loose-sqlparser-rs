@@ -229,9 +229,14 @@ impl<'s> Tokenizer<'s> {
                 // Quote found, we need to check if it's an escaped quote (repeated quote).
                 next_char = self.get_next_char(input_iter);
                 if next_char.as_ref() != Some(&quote_char) {
-                    // We found the end of the quoted token.
+                    // We found the end of the quoted token (or the end of the input).
                     // We return the next character to the tokenizer so it can be processed.
-                    self.capture_token(tokens, self.offset, self.next_offset, TokenValue::Quoted);
+                    self.capture_token(
+                        tokens,
+                        if next_char.is_some() { self.offset } else { self.next_offset },
+                        self.next_offset,
+                        TokenValue::Quoted,
+                    );
                     return next_char;
                 }
             } else {
@@ -422,9 +427,12 @@ impl<'s> Tokenizer<'s> {
                     {
                         // Decimal constant.
                         next_char = self.capture_numeric_constant(input_iter, "_0123456789.eE+-", tokens);
-                    } else {
-                        // We found a single zero, we need to capture it as a numeric constant.
+                    } else if next_char.is_some() {
+                        // We found a single zero ('0') followed by a character that is not part of a numeric constant.
                         self.capture_token(tokens, self.offset, self.offset, TokenValue::NumericConstant);
+                    } else {
+                        // We found a single zero ('0') a the end of the input.
+                        self.capture_token(tokens, self.offset, self.next_offset, TokenValue::NumericConstant);
                     }
                 } else {
                     next_char = self.capture_numeric_constant(input_iter, "_0123456789.eE+-", tokens);
@@ -628,149 +636,170 @@ impl<'s> Tokenizer<'s> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_capture_identifier_or_keyword() {
-        let s: Vec<_> = Tokenizer::new("SELECT g.id, _$$, ID2", ";").collect();
-        let tokens = s[0].tokens();
-        assert_eq!(tokens.as_str_array(), ["SELECT", "g", ".", "id", ",", "_$$", ",", "ID2"]);
-        assert!(tokens[0].is_identifier_or_keyword());
-        assert!(tokens[1].is_identifier_or_keyword());
-        assert!(tokens[2].is_any());
-        assert!(tokens[3].is_identifier_or_keyword());
-        assert!(tokens[4].is_any());
-        assert!(tokens[5].is_identifier_or_keyword());
-        assert!(tokens[6].is_any());
-        assert!(tokens[5].is_identifier_or_keyword());
+    // A macro that check if the input is captured as a token of the given variant, expected positions and value.
+    //
+    // The value is duplicated in the input to make sure the tokenizer works when the token is followed by a space
+    // and when the token is the last token of the input (i.e., "input input").
+    //
+    // IMPORTANT: The input must not contain a Carriage Return.
+    macro_rules! assert_token {
+        ($input:expr, $token_variant:ident) => {
+            let input = format!("{} {}", $input, $input);
+            let statement = Tokenizer::new(&input, ";").next();
+            assert!(statement.is_some());
+            let tokens = statement.as_ref().unwrap().tokens();
+            for (index, token) in tokens.iter().enumerate() {
+                let expected_start_column = index * $input.chars().count() + (index + 1);
+                let expected_end_column = index * $input.chars().count() + $input.chars().count() + index;
+                let expected_offset = index * $input.len() + index;
+                assert!(matches!(token.value, TokenValue::$token_variant(_)), "Variant mismatch: {:?}", token);
+                assert_eq!(token.value.as_ref(), $input);
+                assert_eq!(token.start.column, expected_start_column, "`start.column` mismatch: {:?}", token);
+                assert_eq!(token.end.column, expected_end_column, "`end.column` mismatch: {:?}", token);
+                assert_eq!(token.start.offset, expected_offset, "`offset` mismatch: {:?}", token);
+            }
+        };
+    }
+
+    macro_rules! assert_tokens {
+        ($input:expr, $( $expected:expr ),* ) => {
+            let mut statements = Tokenizer::new($input, ";").into_iter();
+            let expected_values = vec![$( $expected.as_slice() ),*];
+            for expected in expected_values {
+                let statement = statements.next();
+                assert!(statement.is_some(), "Expected more statements.");
+                assert_eq!(
+                    statement.as_ref().unwrap().tokens().as_str_array(),
+                    expected,
+                    "Tokens do not match the expected values."
+                );
+            }
+
+            assert!(statements.next().is_none(), "Expected no more statements.");
+        };
     }
 
     #[test]
-    fn test_numeric_constant() {
-        let expected: Vec<&str> = vec![
-            "0",
-            "1",
-            "42",
-            "3.5",
-            "4.",
-            ".001",
-            "5e2",
-            "1.925e-3",
-            "0b100101",
-            "0B10011001",
-            "0o273",
-            "0O755",
-            "0x42f",
-            "0XFFFF",
-            "1_500_000_000",
-            "0b10001000_00000000",
-            "0o_1_755",
-            "0xFFFF_FFFF",
-            "1.618_034",
-        ];
-        let expected_string = expected.join(" ");
-        let s: Vec<_> = Tokenizer::new(&expected_string, ";").collect();
-        let tokens = s[0].tokens();
-        assert_eq!(tokens.as_str_array(), expected);
-        for token in tokens.iter() {
-            assert!(token.is_numeric_constant());
-        }
+    fn test_capture_identifier_or_keyword_token() {
+        assert_token!("column", IdentifierOrKeyword);
+        assert_token!("column1", IdentifierOrKeyword);
+        assert_token!("column_", IdentifierOrKeyword);
+        assert_token!("column_name", IdentifierOrKeyword);
+        assert_token!("column$", IdentifierOrKeyword);
+        assert_token!("column$name", IdentifierOrKeyword);
+        assert_token!("ColumnName", IdentifierOrKeyword);
+        assert_token!("naïve_table", IdentifierOrKeyword);
+        assert_token!("_leading_underscore", IdentifierOrKeyword);
+        assert_token!("trailing_underscore_", IdentifierOrKeyword);
+        assert_token!("_leading_and_trailing_underscore_", IdentifierOrKeyword);
+        assert_token!("__double__underscores__", IdentifierOrKeyword);
+        assert_token!("_$$", IdentifierOrKeyword);
+    }
+
+    #[test]
+    fn test_numeric_constant_token() {
+        assert_token!("0", NumericConstant);
+        assert_token!("1", NumericConstant);
+        assert_token!("42", NumericConstant);
+        assert_token!("3.5", NumericConstant);
+        assert_token!("4.", NumericConstant);
+        assert_token!(".001", NumericConstant);
+        assert_token!("5e2", NumericConstant);
+        assert_token!("1.925e-3", NumericConstant);
+        assert_token!("0b100101", NumericConstant);
+        assert_token!("0B10011001", NumericConstant);
+        assert_token!("0o273", NumericConstant);
+        assert_token!("0O755", NumericConstant);
+        assert_token!("0x42f", NumericConstant);
+        assert_token!("0XFFFF", NumericConstant);
+        assert_token!("1_500_000_000", NumericConstant);
+        assert_token!("0b10001000_00000000", NumericConstant);
+        assert_token!("0o_1_755", NumericConstant);
+        assert_token!("0xFFFF_FFFF", NumericConstant);
+        assert_token!("1.618_034", NumericConstant);
 
         // The tokenizer should not capture the +/- as part of the numeric constant if not part of the exponential
         // notation.
-        let s: Vec<_> = Tokenizer::new("1.925e-3+1 1.618_034+1 0b100101+1 0o273+1 0x42f+1", ";").collect();
-        assert_eq!(
-            s[0].tokens().as_str_array(),
-            ["1.925e-3", "+", "1", "1.618_034", "+", "1", "0b100101", "+", "1", "0o273", "+", "1", "0x42f", "+", "1"]
-        );
+        assert_tokens!("1.925e-3+1 1.925-3 1.925+3", ["1.925e-3", "+", "1", "1.925", "-", "3", "1.925", "+", "3"]);
     }
 
     #[test]
     fn test_comma() {
-        let s: Vec<_> = Tokenizer::new("1, 2, /* , */", ";").collect();
-        let tokens = s[0].tokens();
-        assert_eq!(tokens.as_str_array(), ["1", ",", "2", ",", "/* , */"]);
-        assert!(tokens[1].is_comma());
-        assert!(tokens[3].is_comma());
+        assert_tokens!("1, 2, /* , */", ["1", ",", "2", ",", "/* , */"]);
     }
 
     #[test]
-    fn test_operators() {
-        let s: Vec<_> = Tokenizer::new("1 + 2+3 -4-5 * 6*7 / 8/9", ";").collect();
-        let tokens = s[0].tokens();
-        assert_eq!(
-            tokens.as_str_array(),
+    fn test_operator_token() {
+        assert_token!("!~*", Operator);
+        assert_token!("!=", Operator);
+        assert_token!(">=", Operator);
+        assert_token!("<=", Operator);
+        assert_token!("<>", Operator);
+        assert_token!("||", Operator);
+        assert_token!("<<", Operator);
+        assert_token!(">>", Operator);
+        assert_token!("::", Operator);
+        assert_token!("~*", Operator);
+        assert_token!("!~", Operator);
+        assert_token!("+", Operator);
+        assert_token!("-", Operator);
+        assert_token!("*", Operator);
+        assert_token!("/", Operator);
+        assert_token!("=", Operator);
+        assert_token!(">", Operator);
+        assert_token!("<", Operator);
+        assert_token!("!", Operator);
+        assert_token!("%", Operator);
+        assert_token!("~", Operator);
+        assert_token!("&", Operator);
+        assert_token!("|", Operator);
+        assert_token!("^", Operator);
+        assert_tokens!(
+            "1 + 2+3 -4-5 * 6*7 / 8/9",
             ["1", "+", "2", "+", "3", "-", "4", "-", "5", "*", "6", "*", "7", "/", "8", "/", "9"]
         );
     }
 
     #[test]
     fn test_parenthesis() {
+        assert_tokens!("SELECT (1 + 2) * 3", ["SELECT", "(", "1", "+", "2", ")", "*", "3"]);
         // A missing opening parenthesis should not stop the tokenizer when reaching a closing parenthesis.
-        let s: Vec<_> = Tokenizer::new("SELECT 1 + 2) + 3; SELECT 2", ";").collect();
-        assert!(s.len() == 2);
-        assert_eq!(s[0].tokens().as_str_array(), ["SELECT", "1", "+", "2", ")", "+", "3", ";"]);
-        assert!(s[0].tokens().last().unwrap().is_statement_delimiter());
-        assert_eq!(s[1].tokens().as_str_array(), ["SELECT", "2"]);
-
-        let s: Vec<_> = Tokenizer::new("SELECT (1 + 2) * 3", ";").collect();
-        let tokens = s[0].tokens();
-        assert_eq!(tokens.as_str_array(), ["SELECT", "(", "1", "+", "2", ")", "*", "3"]);
-        assert!(tokens[1].is_parenthesis());
-        assert!(tokens[2].is_fragment());
-        assert!(tokens[3].is_parenthesis());
-
-        let s: Vec<_> = Tokenizer::new("SELECT ((1+2)*(3*4))", ";").collect();
-        let tokens = s[0].tokens();
-        assert_eq!(tokens.as_str_array(), ["SELECT", "(", "(", "1", "+", "2", ")", "*", "(", "3", "*", "4", ")", ")"]);
-
+        assert_tokens!("SELECT 1 + 2) + 3; SELECT 2", ["SELECT", "1", "+", "2", ")", "+", "3", ";"], ["SELECT", "2"]);
         // A missing closing parenthesis should not prevent the tokenizer to stop when reaching the statement delimiter.
-        let s: Vec<_> = Tokenizer::new("SELECT (1 + 2 + 3; SELECT 2", ";").collect();
-        assert!(s.len() == 2);
-        assert_eq!(s[0].tokens().as_str_array(), ["SELECT", "(", "1", "+", "2", "+", "3", ";"]);
-        assert!(s[0].tokens().last().unwrap().is_statement_delimiter());
-        assert_eq!(s[1].tokens().as_str_array(), ["SELECT", "2"]);
+        assert_tokens!("SELECT (1 + 2 + 3; SELECT 2", ["SELECT", "(", "1", "+", "2", "+", "3", ";"], ["SELECT", "2"]);
     }
 
     #[test]
     fn test_delimited_token() {
-        let s: Vec<_> = Tokenizer::new("BEGIN $$O'Reilly$$, $tag$with_tag$tag$, $x$__$__$x$ END", ";").collect();
-        let tokens = s[0].tokens();
-        assert_eq!(
-            tokens.as_str_array(),
-            ["BEGIN", "$$O'Reilly$$", ",", "$tag$with_tag$tag$", ",", "$x$__$__$x$", "END"]
+        assert_token!("$$O'Reilly$$", Delimited);
+        assert_token!("$tag$with_tag$tag$", Delimited);
+        assert_token!("$x$__$__$x$", Delimited);
+    }
+
+    #[test]
+    fn test_comment_token() {
+        // multi-line comment
+        assert_token!("/* comment */", Comment);
+        assert_token!("/* /*nested*/comment */", Comment);
+        assert_tokens!("BEGIN /* not closed...", ["BEGIN", "/* not closed..."]);
+        assert_tokens!("BEGIN /* not closed...; BEGIN", ["BEGIN", "/* not closed...; BEGIN"]);
+        assert_tokens!("/* line 1 \r\n line 2 */", ["/* line 1 \r\n line 2 */"]);
+
+        // single-line comment
+        assert_tokens!(
+            "-- comment\n--comment\n# comment\n#comment",
+            ["-- comment", "--comment", "# comment", "#comment"]
         );
-        assert!(tokens[1].is_delimited());
-        assert!(tokens[3].is_delimited());
-        assert!(tokens[5].is_delimited());
-    }
-
-    #[test]
-    fn test_multi_line_comment() {
-        let s: Vec<_> =
-            Tokenizer::new("/* /*nested*/comment */ /** line\n *  break\n **/ /* not closed...", ";").collect();
-        let tokens = s[0].tokens();
-        assert_eq!(tokens.as_str_array(), ["/* /*nested*/comment */", "/** line\n *  break\n **/", "/* not closed..."]);
-        assert!(tokens[0].is_comment());
-        assert!(tokens[1].is_comment());
-        assert!(tokens[2].is_comment());
-    }
-
-    #[test]
-    fn test_single_line_comment() {
-        let s: Vec<_> = Tokenizer::new("-- comment\n# comment\n# comment", ";").collect();
-        let tokens = s[0].tokens();
-        assert_eq!(tokens.as_str_array(), ["-- comment", "# comment", "# comment"]);
-        assert!(tokens[0].is_comment());
-        assert!(tokens[1].is_comment());
-        assert!(tokens[2].is_comment());
     }
 
     #[test]
     fn test_quoted_token() {
-        let s: Vec<_> = Tokenizer::new(r#"'' "ID" "ID ""X""" '''' 'O''Reilly' "#, ";").collect();
-        let tokens = s[0].tokens();
-        assert_eq!(tokens.as_str_array(), ["''", r#""ID""#, r#""ID ""X""""#, "''''", "'O''Reilly'"]);
-        assert!(tokens[1].is_quoted());
-        assert!(tokens[2].is_quoted());
+        assert_token!(r#"''"#, Quoted); // empty
+        assert_token!(r#""""ID""""#, Quoted); // "ID"
+        assert_token!(r#""""#, Quoted); // empty
+        assert_token!(r#""ID ""X""""#, Quoted); // ID "X"
+        assert_token!(r#"''''"#, Quoted); // A single quote, SELECT '''' -> '
+        assert_token!(r#"'O''Reilly'"#, Quoted); // O'Reilly
     }
 
     #[test]
