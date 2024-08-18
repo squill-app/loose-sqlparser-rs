@@ -19,7 +19,7 @@ assert_eq!(statements[1].tokens().as_str_array(), ["SELECT", "2"]);
 - Support multiple sql statement.
 
   ```rust
-    let statements: Vec<_> = loose_sqlparser::parse("SELECT /* one */ 1;SELECT 2").collect();
+    let statements: Vec<_> = loose_sqlparser::parse("SELECT 1;SELECT 2").collect();
     assert_eq!(statements.len(), 2);
   ```
 
