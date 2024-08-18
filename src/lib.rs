@@ -1,10 +1,12 @@
 #![doc = include_str!("../README.md")]
 
+mod options;
 mod statement;
 mod tokenizer;
 mod tokens;
 
 // Re-export the public API
+pub use options::Options;
 pub use statement::Statement;
 pub use tokens::{Token, TokenValue, Tokens};
 
@@ -42,7 +44,7 @@ pub struct Position {
 /// The iterator will return a {{SqlStatement}} for each statement found in the input string.
 /// Statements are separated by a semicolon (`;`).
 pub fn loose_sqlparse(sql: &str) -> impl Iterator<Item = Statement<'_>> {
-    Tokenizer::new(sql, ";")
+    Tokenizer::new(sql, Options::default())
 }
 
 /// Scans a SQL string and returns an iterator over the statements.
@@ -51,6 +53,6 @@ pub fn loose_sqlparse(sql: &str) -> impl Iterator<Item = Statement<'_>> {
 ///
 /// The iterator will return a {{Statement}} for each statement found in the input string.
 /// Statements are separated by the given delimiter.
-pub fn loose_sqlparse_with_delimiter<'s>(sql: &'s str, delimiter: &'s str) -> impl Iterator<Item = Statement<'s>> {
-    Tokenizer::new(sql, delimiter)
+pub fn loose_sqlparse_with_options(sql: &str, options: Options) -> impl Iterator<Item = Statement<'_>> {
+    Tokenizer::new(sql, options)
 }

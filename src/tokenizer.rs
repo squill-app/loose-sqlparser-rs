@@ -1,4 +1,4 @@
-use crate::{Position, Statement};
+use crate::{Options, Position, Statement};
 use crate::{Token, TokenValue, Tokens};
 
 // The list of all operators supported by the tokenizer.
@@ -9,6 +9,7 @@ const OPERATORS: [&str; 24] = [
 ];
 
 pub(crate) struct Tokenizer<'s> {
+    // The input to be tokenized (the whole SQL to be tokenized).
     input: &'s str,
 
     // The byte offset of the current character in the input.
@@ -26,8 +27,8 @@ pub(crate) struct Tokenizer<'s> {
     // The start position of the next token to be captured.
     token_start: Position,
 
-    // The SQL delimiter used to separate statements.
-    delimiter: &'s str,
+    // The tokenizer options.
+    options: Options,
 }
 
 impl<'s> Iterator for Tokenizer<'s> {
@@ -40,20 +41,20 @@ impl<'s> Iterator for Tokenizer<'s> {
         // The start of the next statement is where the tokenizer is currently positioned.
         let next = &self.input[self.next_offset..];
         let mut input_iter = next.chars();
-        self.get_next_statement(input_iter.by_ref(), self.delimiter)
+        self.get_next_statement(input_iter.by_ref(), &self.options.statement_delimiter.clone())
     }
 }
 
 impl<'s> Tokenizer<'s> {
-    pub(crate) fn new(input: &'s str, delimiter: &'s str) -> Self {
+    pub(crate) fn new(input: &'s str, options: Options) -> Self {
         Tokenizer {
             input,
+            options,
             offset: 0,
             next_offset: 0,
             line: 1,
             column: 0,
             token_start: { Position { line: 1, column: 1, offset: 0 } },
-            delimiter,
         }
     }
 
@@ -687,7 +688,7 @@ mod tests {
     macro_rules! assert_token {
         ($input:expr, $token_variant:ident) => {
             let input = format!("{} {}", $input, $input);
-            let statement = Tokenizer::new(&input, ";").next();
+            let statement = Tokenizer::new(&input, Options::default()).next();
             assert!(statement.is_some());
             let tokens = statement.as_ref().unwrap().tokens();
             for (index, token) in tokens.iter().enumerate() {
@@ -705,7 +706,7 @@ mod tests {
 
     macro_rules! assert_tokens {
         ($input:expr, $( $expected:expr ),* ) => {
-            let mut statements = Tokenizer::new($input, ";").into_iter();
+            let mut statements = Tokenizer::new($input, Options::default()).into_iter();
             let expected_values = vec![$( $expected.as_slice() ),*];
             for expected in expected_values {
                 let statement = statements.next();
@@ -875,7 +876,7 @@ mod tests {
 
     #[test]
     fn test_split_statements() {
-        let s: Vec<_> = Tokenizer::new("SELECT 1; SELECT 2", ";").collect();
+        let s: Vec<_> = Tokenizer::new("SELECT 1; SELECT 2", Options::default()).collect();
         assert_eq!(s.len(), 2);
         assert_eq!(s[0].sql(), "SELECT 1;");
         assert_eq!(s[1].sql(), "SELECT 2");
@@ -883,7 +884,7 @@ mod tests {
 
     #[test]
     fn test_empty_input() {
-        let s: Vec<_> = Tokenizer::new("", ";").collect();
+        let s: Vec<_> = Tokenizer::new("", Options::default()).collect();
         assert_eq!(s.len(), 0);
     }
 }
