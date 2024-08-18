@@ -58,6 +58,35 @@ impl<'s> Tokenizer<'s> {
         }
     }
 
+    // Extract the next character from the given iterator.
+    #[inline]
+    fn get_next_char(&mut self, input_iter: &mut std::str::Chars) -> Option<char> {
+        let next_char = input_iter.next();
+        if next_char.is_some() {
+            self.offset = self.next_offset;
+            self.next_offset += next_char.as_ref().unwrap().len_utf8();
+            self.column += 1;
+        }
+        next_char
+    }
+
+    // Check if the input at the current position starts with the given delimiter (case-sensitive).
+    #[inline]
+    fn check_delimiter(&self, delimiter: &str) -> bool {
+        self.remaining_input().starts_with(delimiter)
+    }
+
+    // Move an iterator n characters forward.
+    //
+    // WARNING: That function is not safe to use if new lines are skipped.
+    #[inline]
+    fn forward_iter(&mut self, input_iter: &mut std::str::Chars, n: usize) {
+        let mut n = n;
+        while n > 0 && self.get_next_char(input_iter).is_some() {
+            n -= 1;
+        }
+    }
+
     // The remaining input to be processed by the tokenizer, including the current character.
     #[inline]
     fn remaining_input(&self) -> &str {
@@ -253,42 +282,6 @@ impl<'s> Tokenizer<'s> {
         next_char
     }
 
-    #[inline]
-    fn get_next_char(&mut self, input_iter: &mut std::str::Chars) -> Option<char> {
-        let next_char = input_iter.next();
-        if next_char.is_some() {
-            self.offset = self.next_offset;
-            self.next_offset += next_char.as_ref().unwrap().len_utf8();
-            self.column += 1;
-        }
-        next_char
-    }
-
-    // Get the next character in the input (without moving the iterator).
-    #[inline]
-    fn next_char(&self) -> Option<char> {
-        self.input[self.next_offset..].chars().next()
-    }
-
-    // Check if the input at the current position starts with the given delimiter (case-sensitive).
-    #[inline]
-    fn check_delimiter(&self, delimiter: &str) -> bool {
-        self.remaining_input().starts_with(delimiter)
-    }
-
-    // Move an iterator n characters forward.
-    // That function is expecting that the iterator contains at least n more characters and there are no new lines
-    // skipped.
-    #[inline]
-    fn forward_iter(&mut self, input_iter: &mut std::str::Chars, n: usize) {
-        if n > 0 {
-            // FIXME: Doesn't handle utf-8 characters more than 1 byte.
-            input_iter.nth(n - 1);
-            self.next_offset += n;
-            self.column += n;
-        }
-    }
-
     fn capture_fragment(
         &mut self,
         input_iter: &mut std::str::Chars,
@@ -342,8 +335,27 @@ impl<'s> Tokenizer<'s> {
                 self.capture_multi_line_comment(input_iter, tokens);
             } else if c == '\'' || c == '"' || c == '`' {
                 //
-                // Quoted identifier or String literal.
+                // Quoted identifier or constant.
                 //
+                if c == '\'' && self.offset > self.token_start.offset {
+                    // There is an introducer:
+                    // - Escaped string constant (E'hello\\tworld').
+                    // - Unicode string constant (N'こんにちは').
+                    // - Bit-String constant (B'1001', X'1FF').
+                    // - String constant with a character set introducer (_latin1'hello').
+                    let introducer = &self.input[self.token_start.offset..self.offset];
+                    let first_char = introducer.chars().next().unwrap();
+                    if first_char == 'B' || first_char == 'b' || first_char == 'X' || first_char == 'x' {
+                        // Escaped quotes are not allowed by Bit-String constants.
+                        next_char = self.capture_delimited_token(
+                            input_iter,
+                            &c.to_string(),
+                            tokens,
+                            TokenValue::QuotedIdentifierOrConstant,
+                        );
+                        continue;
+                    }
+                }
                 next_char = self.capture_quoted_identifier_or_constant(input_iter, c, tokens);
                 continue;
             } else if (c == 'U' || c == 'u') && self.remaining_input().starts_with("U&\"") {
@@ -354,26 +366,6 @@ impl<'s> Tokenizer<'s> {
                 // immediately before the opening quote, without any spaces in between, for example U&"foo".
                 self.forward_iter(input_iter, 2);
                 next_char = self.capture_quoted_identifier_or_constant(input_iter, '"', tokens);
-                continue;
-            } else if (c == 'E' || c == 'e' || c == 'N' || c == 'n') && self.next_char() == Some('\'') {
-                //
-                // Escaped string constant (PostgreSQL: E'hello\\tworld').
-                // Unicode string constant (SQL:2003: N'こんにちは').
-                //
-                // An escaped string constant starts with E (upper or lower case letter E) immediately before the opening
-                // quote, without any spaces in between, for example E'foo'.
-                self.forward_iter(input_iter, 1);
-                next_char = self.capture_quoted_identifier_or_constant(input_iter, '\'', tokens);
-                continue;
-            } else if (c == 'B' || c == 'b' || c == 'X' || c == 'x') && self.next_char() == Some('\'') {
-                //
-                //  Bit-String Constants (PostgreSQL: B'1001', X'1FF').
-                //
-                // Because a single quote is not allowed within a bit-string constant, we can safely capture the token
-                // without having to check for escaped quotes.
-                self.forward_iter(input_iter, 1);
-                next_char =
-                    self.capture_delimited_token(input_iter, "'", tokens, TokenValue::QuotedIdentifierOrConstant);
                 continue;
             } else if c == '$' {
                 //
@@ -485,7 +477,7 @@ impl<'s> Tokenizer<'s> {
                 // Identifier or keyword.
                 //
                 self.capture_token(tokens, self.offset, self.offset, TokenValue::Any);
-                next_char = self.capture_identifier_or_keyword(input_iter, tokens);
+                next_char = self.try_capture_identifier_or_keyword(input_iter, tokens);
                 continue; // `next_char` need to be processed by the tokenizer...
             } else {
                 //
@@ -522,7 +514,7 @@ impl<'s> Tokenizer<'s> {
             // Capture the operator
             self.capture_token(tokens, self.offset + op.len(), self.offset + op.len(), TokenValue::Operator);
             // We need to move the iterator to the end of the operator.
-            self.forward_iter(input_iter, op.len() - 1);
+            self.forward_iter(input_iter, op.chars().count() - 1);
             true
         } else {
             false
@@ -566,7 +558,7 @@ impl<'s> Tokenizer<'s> {
                         value_constructor,
                     );
                     // We return the next character to the tokenizer so it can be processed.
-                    self.forward_iter(input_iter, delimiter.len() - 1);
+                    self.forward_iter(input_iter, delimiter.chars().count() - 1);
                     return self.get_next_char(input_iter);
                 }
             } else {
@@ -595,7 +587,7 @@ impl<'s> Tokenizer<'s> {
             if self.check_delimiter(delimiter) {
                 // The delimiter was found but not captured as a token, we need to capture it now.
                 // Moving forward the iterator until the end of the delimiter.
-                self.forward_iter(input_iter, delimiter.len() - 1);
+                self.forward_iter(input_iter, delimiter.chars().count() - 1);
                 self.capture_token(&mut tokens, self.next_offset, self.next_offset, TokenValue::StatementDelimiter);
                 break;
             } else {
@@ -650,12 +642,15 @@ impl<'s> Tokenizer<'s> {
         next_char
     }
 
-    /// Capture an identifier or a keyword.
+    /// Try to capture an identifier or a keyword.
     ///
     /// SQL identifiers and key words must begin with a letter (a-z, but also letters with diacritical marks and
     /// non-Latin letters) or an underscore (_). Subsequent characters in an identifier or key word can be letters,
     /// underscores, digits (0-9), or dollar signs ($).
-    fn capture_identifier_or_keyword(
+    ///
+    /// If the token is immediately followed by a single quote (') or a double quote (") it will not be captured because
+    /// it should be captured as a part of a constant with a introducer (E'', N'', _latin1'', ...).
+    fn try_capture_identifier_or_keyword(
         &mut self,
         input_iter: &mut std::str::Chars,
         tokens: &mut Tokens<'s>,
@@ -667,6 +662,10 @@ impl<'s> Tokenizer<'s> {
             } else {
                 break;
             }
+        }
+        if next_char.as_ref() == Some(&'\'') {
+            // The identifier or keyword is followed by a quote, it should be captured as a constant with an introducer.
+            return next_char;
         }
         // We reached the end of the identifier or keyword (or the end of the input).
         let end_offset = if next_char.is_some() { self.offset } else { self.next_offset };
@@ -748,6 +747,16 @@ mod tests {
         assert_token!("b''", QuotedIdentifierOrConstant);
         assert_token!("x'1FF'", QuotedIdentifierOrConstant);
         assert_token!("x''", QuotedIdentifierOrConstant);
+    }
+
+    #[test]
+    fn test_string_constant_with_charset_introducer() {
+        // A character string literal may have an optional character set introducer (MySQL).
+        // https://dev.mysql.com/doc/refman/8.4/en/string-literals.html
+        assert_token!("_latin1'string'", QuotedIdentifierOrConstant);
+        assert_token!("_latin1''", QuotedIdentifierOrConstant);
+        assert_token!("_binary'string'", QuotedIdentifierOrConstant);
+        assert_token!("_utf8mb4'string'", QuotedIdentifierOrConstant);
     }
 
     #[test]
@@ -853,6 +862,7 @@ mod tests {
         // multi-line comment
         assert_token!("/* comment */", Comment);
         assert_token!("/* /*nested*/comment */", Comment);
+        assert_token!("/*+ SET_VAR(foreign_key_checks=OFF) */", Comment);
         assert_tokens!("BEGIN /* not closed...", ["BEGIN", "/* not closed..."]);
         assert_tokens!("BEGIN /* not closed...; BEGIN", ["BEGIN", "/* not closed...; BEGIN"]);
         assert_tokens!("/* line 1 \r\n line 2 */", ["/* line 1 \r\n line 2 */"]);
