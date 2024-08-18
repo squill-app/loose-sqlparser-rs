@@ -72,45 +72,51 @@ assert_eq!(statements[1].tokens().as_str_array(), ["SELECT", "2"]);
 
 - Helper functions to interpret the AST:
 
-```rust
-  let statements: Vec<_> = loose_sqlparser::parse(r#"
-    SELECT * FROM my_table;
-    SELECT * INTO my_table FROM another_table WHERE country = 'France';
-    DELETE FROM my_table WHERE id = 42;
-    DELETE FROM my_table WHERE id = 42 RETURNING id;
-    WITH ids AS (SELECT 42 AS id) SELECT * FROM my_table JOIN ids ON test.id = ids.id;
-    WITH ids AS (SELECT 42 AS id) DELETE FROM my_table USING ids WHERE test.id = ids.id;
-    WITH ids AS (SELECT 42 AS id) DELETE FROM my_table USING ids WHERE test.id = ids.id RETURNING test.id;
-    EXPLAIN DELETE FROM my_table WHERE id = 42;
-    ;
-    /* This an empty statement */;
-    SELECT 1 + 2 /* This is a comment */
-  "#).collect();
+  ```rust
+    let statements: Vec<_> = loose_sqlparser::parse(r#"
+      SELECT * FROM my_table;
+      SELECT * INTO my_table FROM another_table WHERE country = 'France';
+      DELETE FROM my_table WHERE id = 42;
+      DELETE FROM my_table WHERE id = 42 RETURNING id;
+      WITH ids AS (SELECT 42 AS id) SELECT * FROM my_table JOIN ids ON test.id = ids.id;
+      WITH ids AS (SELECT 42 AS id) DELETE FROM my_table USING ids WHERE test.id = ids.id;
+      WITH ids AS (SELECT 42 AS id) DELETE FROM my_table USING ids WHERE test.id = ids.id
+           RETURNING test.id;
+      EXPLAIN DELETE FROM my_table WHERE id = 42;
+      ;
+      /* This an empty statement */;
+      SELECT 1 + 2 /* This is a comment */
+    "#).collect();
 
-  // {{Statement::is_query()}} determine if the statement can eventually return a result set:
-  assert!(statements[0].is_query());  // SELECT ...
-  assert!(!statements[1].is_query()); // SELECT ... INTO ...
-  assert!(!statements[2].is_query()); // DELETE ...
-  assert!(statements[3].is_query());  // DELETE ... RETURNING ...
-  assert!(statements[4].is_query());  // WITH ... SELECT ...
-  assert!(!statements[5].is_query()); // WITH ... DELETE ...
-  assert!(statements[6].is_query());  // WITH ... DELETE ... RETURNING ...
-  assert!(statements[7].is_query());  // EXPLAIN ...
+    // {{Statement::is_query()}} determine if the statement can eventually return a
+    // result set:
+    assert!(statements[0].is_query());  // SELECT ...
+    assert!(!statements[1].is_query()); // SELECT ... INTO ...
+    assert!(!statements[2].is_query()); // DELETE ...
+    assert!(statements[3].is_query());  // DELETE ... RETURNING ...
+    assert!(statements[4].is_query());  // WITH ... SELECT ...
+    assert!(!statements[5].is_query()); // WITH ... DELETE ...
+    assert!(statements[6].is_query());  // WITH ... DELETE ... RETURNING ...
+    assert!(statements[7].is_query());  // EXPLAIN ...
 
-  // {{Statement::is_empty()}} determine if the statement is empty:
-  assert_eq!(statements[8].tokens().as_str_array(), [";"]);
-  assert!(statements[8].is_empty());
-  assert_eq!(statements[9].tokens().as_str_array(), ["/* This an empty statement */", ";"]);
-  assert!(statements[9].is_empty());
+    // {{Statement::is_empty()}} determine if the statement is empty:
+    assert_eq!(statements[8].tokens().as_str_array(), [";"]);
+    assert!(statements[8].is_empty());
+    assert_eq!(statements[9].tokens().as_str_array(), ["/* This an empty statement */", ";"]);
+    assert!(statements[9].is_empty());
 
-  // {{Token::is_comment()}} and more token's functions can be used to determine the type of token:
-  assert_eq!(statements[10].tokens().as_str_array(), ["SELECT", "1", "+", "2", "/* This is a comment */"]);
-  assert!(statements[10].tokens()[0].is_identifier_or_keyword());
-  assert!(statements[10].tokens()[1].is_numeric_constant());
-  assert!(statements[10].tokens()[2].is_operator());
-  assert!(statements[10].tokens()[3].is_numeric_constant());
-  assert!(statements[10].tokens()[4].is_comment());
-```
+    // {{Token::is_comment()}} and more token's functions can be used to determine the
+    // type of token:
+    assert_eq!(
+      statements[10].tokens().as_str_array(),
+      ["SELECT", "1", "+", "2", "/* This is a comment */"]
+    );
+    assert!(statements[10].tokens()[0].is_identifier_or_keyword());
+    assert!(statements[10].tokens()[1].is_numeric_constant());
+    assert!(statements[10].tokens()[2].is_operator());
+    assert!(statements[10].tokens()[3].is_numeric_constant());
+    assert!(statements[10].tokens()[4].is_comment());
+  ```
 
 - Zero-dependencies.
 - Blasting fast...
