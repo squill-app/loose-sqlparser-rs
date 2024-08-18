@@ -34,6 +34,13 @@ function codecov() {
         ;;
     esac
   fi
+  # Unset environment variables
+  unset LLVM_PROFILE_FILE
+  unset RUST_BACKTRACE
+  unset RUST_LOG
+  unset RUST_LOG_SPAN_EVENTS
+  unset RUSTFLAGS
+  unset RUSTDOCFLAGS
 }
 
 # -----------------------------------------------------------------------------
@@ -46,12 +53,4 @@ function clean() {
   done
   [ -f "lcov.info" ] && rm lcov.info
   cargo clean
-
-  # Unset environment variables
-  unset LLVM_PROFILE_FILE
-  unset RUST_BACKTRACE
-  unset RUST_LOG
-  unset RUST_LOG_SPAN_EVENTS
-  unset RUSTFLAGS
-  unset RUSTDOCFLAGS  
 }

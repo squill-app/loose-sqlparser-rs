@@ -6,7 +6,7 @@ use std::ops::{Deref, DerefMut};
 pub enum TokenValue<'s> {
     Any(&'s str),
     Comment(&'s str),
-    Quoted(&'s str),
+    QuotedIdentifierOrConstant(&'s str),
     Delimited(&'s str),
 
     /// A Numeric Constant
@@ -74,7 +74,7 @@ impl<'s> AsRef<str> for TokenValue<'s> {
         match self {
             TokenValue::Any(value) => value,
             TokenValue::Comment(value) => value,
-            TokenValue::Quoted(value) => value,
+            TokenValue::QuotedIdentifierOrConstant(value) => value,
             TokenValue::Delimited(value) => value,
             TokenValue::Operator(value) => value,
             TokenValue::StatementDelimiter(value) => value,
@@ -116,8 +116,8 @@ impl<'s> Token<'s> {
         matches!(self.value, TokenValue::Comment(_))
     }
 
-    pub fn is_quoted(&self) -> bool {
-        matches!(self.value, TokenValue::Quoted(_))
+    pub fn is_quoted_identifier_or_constant(&self) -> bool {
+        matches!(self.value, TokenValue::QuotedIdentifierOrConstant(_))
     }
 
     pub fn is_delimited(&self) -> bool {
@@ -166,7 +166,7 @@ impl<'s> Token<'s> {
         match &self.value {
             TokenValue::Any(value) => vec![value],
             TokenValue::Comment(value) => vec![value],
-            TokenValue::Quoted(value) => vec![value],
+            TokenValue::QuotedIdentifierOrConstant(value) => vec![value],
             TokenValue::Delimited(value) => vec![value],
             TokenValue::StatementDelimiter(value) => vec![value],
             TokenValue::Operator(value) => vec![value],

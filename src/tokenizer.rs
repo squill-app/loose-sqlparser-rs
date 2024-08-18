@@ -217,7 +217,7 @@ impl<'s> Tokenizer<'s> {
     //
     // Because this function has to peek the next character to check for an escaped delimiter, it returns the next
     // character to be processed by the tokenizer.
-    fn capture_quoted_token(
+    fn capture_quoted_identifier_or_constant(
         &mut self,
         input_iter: &mut std::str::Chars,
         quote_char: char,
@@ -235,7 +235,7 @@ impl<'s> Tokenizer<'s> {
                         tokens,
                         if next_char.is_some() { self.offset } else { self.next_offset },
                         self.next_offset,
-                        TokenValue::Quoted,
+                        TokenValue::QuotedIdentifierOrConstant,
                     );
                     return next_char;
                 }
@@ -248,7 +248,7 @@ impl<'s> Tokenizer<'s> {
         }
         // We reached the end of the input without finding the end of the identifier, we still need to capture the last
         // token.
-        self.capture_token(tokens, self.next_offset, self.next_offset, TokenValue::Quoted);
+        self.capture_token(tokens, self.next_offset, self.next_offset, TokenValue::QuotedIdentifierOrConstant);
         next_char
     }
 
@@ -263,6 +263,12 @@ impl<'s> Tokenizer<'s> {
         next_char
     }
 
+    // Get the next character in the input (without moving the iterator).
+    #[inline]
+    fn next_char(&self) -> Option<char> {
+        self.input[self.next_offset..].chars().next()
+    }
+
     // Check if the input at the current position starts with the given delimiter (case-sensitive).
     #[inline]
     fn check_delimiter(&self, delimiter: &str) -> bool {
@@ -275,6 +281,7 @@ impl<'s> Tokenizer<'s> {
     #[inline]
     fn forward_iter(&mut self, input_iter: &mut std::str::Chars, n: usize) {
         if n > 0 {
+            // FIXME: Doesn't handle utf-8 characters more than 1 byte.
             input_iter.nth(n - 1);
             self.next_offset += n;
             self.column += n;
@@ -332,11 +339,30 @@ impl<'s> Tokenizer<'s> {
                 //
                 self.capture_token(tokens, self.offset, self.offset, TokenValue::Any);
                 self.capture_multi_line_comment(input_iter, tokens);
-            } else if c == '"' || c == '`' || c == '\'' {
+            } else if c == '\'' || c == '"' || c == '`' {
                 //
                 // Quoted identifier or String literal.
                 //
-                next_char = self.capture_quoted_token(input_iter, c, tokens);
+                next_char = self.capture_quoted_identifier_or_constant(input_iter, c, tokens);
+                continue;
+            } else if (c == 'U' || c == 'u') && self.remaining_input().starts_with("U&\"") {
+                //
+                // Escaped Unicode quoted identifier (PostgreSQL: U&"d\0061t\+000061").
+                //
+                // A Unicode escape string constant starts with U& (upper or lower case letter U followed by ampersand)
+                // immediately before the opening quote, without any spaces in between, for example U&"foo".
+                self.forward_iter(input_iter, 2);
+                next_char = self.capture_quoted_identifier_or_constant(input_iter, '"', tokens);
+                continue;
+            } else if (c == 'E' || c == 'e' || c == 'N' || c == 'n') && self.next_char() == Some('\'') {
+                //
+                // Escaped string constant (PostgreSQL: E'hello\\tworld').
+                // Unicode string constant (SQL:2003: N'こんにちは').
+                //
+                // An escaped string constant starts with E (upper or lower case letter E) immediately before the opening
+                // quote, without any spaces in between, for example E'foo'.
+                self.forward_iter(input_iter, 1);
+                next_char = self.capture_quoted_identifier_or_constant(input_iter, '\'', tokens);
                 continue;
             } else if c == '$' {
                 //
@@ -680,6 +706,20 @@ mod tests {
     }
 
     #[test]
+    fn test_quoted_identifier_with_unicode_escapes() {
+        assert_token!(r#"U&"d\\0061t\\+000061""#, QuotedIdentifierOrConstant);
+        assert_token!(r#"U&"\\0441\\043B\\043E\\043D""#, QuotedIdentifierOrConstant);
+    }
+
+    #[test]
+    fn test_escaped_or_unicode_string_constant() {
+        assert_token!("E''", QuotedIdentifierOrConstant);
+        assert_token!("E'hello\\world'", QuotedIdentifierOrConstant);
+        assert_token!("N''", QuotedIdentifierOrConstant);
+        assert_token!("N'こんにちは'", QuotedIdentifierOrConstant);
+    }
+
+    #[test]
     fn test_capture_identifier_or_keyword_token() {
         assert_token!("column", IdentifierOrKeyword);
         assert_token!("column1", IdentifierOrKeyword);
@@ -699,6 +739,7 @@ mod tests {
     #[test]
     fn test_numeric_constant_token() {
         assert_token!("0", NumericConstant);
+        assert_token!("0.", NumericConstant);
         assert_token!("1", NumericConstant);
         assert_token!("42", NumericConstant);
         assert_token!("3.5", NumericConstant);
@@ -793,13 +834,13 @@ mod tests {
     }
 
     #[test]
-    fn test_quoted_token() {
-        assert_token!(r#"''"#, Quoted); // empty
-        assert_token!(r#""""ID""""#, Quoted); // "ID"
-        assert_token!(r#""""#, Quoted); // empty
-        assert_token!(r#""ID ""X""""#, Quoted); // ID "X"
-        assert_token!(r#"''''"#, Quoted); // A single quote, SELECT '''' -> '
-        assert_token!(r#"'O''Reilly'"#, Quoted); // O'Reilly
+    fn test_quoted_identifier_or_constant() {
+        assert_token!(r#"''"#, QuotedIdentifierOrConstant); // empty
+        assert_token!(r#""""ID""""#, QuotedIdentifierOrConstant); // "ID"
+        assert_token!(r#""""#, QuotedIdentifierOrConstant); // empty
+        assert_token!(r#""ID ""X""""#, QuotedIdentifierOrConstant); // ID "X"
+        assert_token!(r#"''''"#, QuotedIdentifierOrConstant); // A single quote, SELECT '''' -> '
+        assert_token!(r#"'O''Reilly'"#, QuotedIdentifierOrConstant); // O'Reilly
     }
 
     #[test]
