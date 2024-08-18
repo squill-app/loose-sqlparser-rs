@@ -1,4 +1,4 @@
-use crate::{tokens::Tokens, Position};
+use crate::{tokens::Tokens, Position, TokenValue};
 
 #[derive(Debug)]
 pub struct Statement<'s> {
@@ -33,10 +33,12 @@ impl Statement<'_> {
     /// Keywords found on CTEs or sub queries are not included in this list.
     pub fn keywords(&self) -> Vec<&str> {
         self.tokens
-            .as_str_array()
             .iter()
-            .filter(|&&token| token.chars().all(|c| c.is_ascii_alphabetic()))
-            .cloned() // Clone the &str references to return a Vec<&'s str>
+            .filter(|token| match token.value {
+                TokenValue::IdentifierOrKeyword(value) => value.chars().all(|c| c.is_ascii_alphabetic()),
+                _ => false,
+            })
+            .map(|token| token.value.as_ref())
             .collect()
     }
 
@@ -57,7 +59,6 @@ impl Statement<'_> {
     /// - WITH ... SELECT ...
     /// - VALUES ...
     /// - LIST ...
-    /// - SHOW ...
     /// - PRAGMA ...
     /// - INSERT|UPDATE|DELETE ... RETURNING ...
     pub fn is_query(&self) -> bool {
@@ -68,9 +69,9 @@ impl Statement<'_> {
         // 1. The statement starts with a keyword that is unambiguously a query.
         (matches!(keywords[0].to_uppercase().as_str(),
             "SHOW" | "DESCRIBE" | "EXPLAIN" | "VALUES" | "LIST" | "PRAGMA"))
-        // 2. The statement starts with a WITH clause followed by a SELECT.
+        // 2. The statement starts with a WITH clause followed by a SELECT or RETURNING.
             || (keywords[0].to_uppercase() == "WITH"
-                && keywords.iter().any(|&k| matches!(k.to_uppercase().as_str(), "SELECT")))
+                && keywords.iter().any(|&k| matches!(k.to_uppercase().as_str(), "SELECT" | "RETURNING")))
         // 3. The statement is an INSERT, UPDATE, or DELETE with a RETURNING clause.
             || (matches!(keywords[0].to_uppercase().as_str(), "INSERT" | "UPDATE" | "DELETE")
                 && keywords.iter().any(|&k| k.to_uppercase().as_str() == "RETURNING"))

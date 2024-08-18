@@ -21,3 +21,9 @@ authors = ["Philippe Shampanier <pshampanier@gmail.com>"]
 
 [dev-dependencies]
 terminal_size = "0.3.0"
+criterion = { version = "0.5.1", features = ["html_reports"] }
+sqlparser = "0.50"
+
+[[bench]]
+name = "sqlparser"
+harness = false

@@ -2,7 +2,7 @@ use loose_sqlparser::{loose_sqlparse, Tokens};
 use terminal_size::{terminal_size, Width};
 
 const ELLIPSIS: &str = "...";
-const METADATA_COL_WIDTH: usize = 27;
+const METADATA_COL_WIDTH: usize = 35;
 
 fn main() {
     let filename = std::env::args().nth(1).expect(r#"Usage: cargo run --example cli FILENAME.sql"#);
@@ -14,9 +14,9 @@ fn main() {
         println!("  query: {}", if statement.is_query() { "yes" } else { "no" });
         println!("  empty: {}", if statement.is_empty() { "yes" } else { "no" });
         println!();
-        println!("------------+------------+-{}", "-".repeat(col_width));
-        println!("    START   |     END    | TOKEN");
-        println!("------------+------------+-{}", "-".repeat(col_width));
+        println!("------------+------------+--------+{}", "-".repeat(col_width));
+        println!("    START   |     END    | OFFSET | TOKEN");
+        println!("------------+------------+--------+{}", "-".repeat(col_width));
         display_tokens(statement.tokens(), col_width, 0);
     }
 }
@@ -36,9 +36,10 @@ fn display_tokens(tokens: &Tokens, col_width: usize, indent: usize) {
             sql.push_str(ELLIPSIS);
         }
         println!(
-            " {:>10} | {:>10} | {:indent$}{}",
+            " {:>10} | {:>10} | {:>6} | {:indent$}{}",
             format!("{}:{}", token.start.line, token.start.column),
             format!("{}:{}", token.end.line, token.end.column),
+            token.start.offset,
             "",
             sql
         );

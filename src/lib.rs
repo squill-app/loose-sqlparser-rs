@@ -56,3 +56,42 @@ pub fn loose_sqlparse(sql: &str) -> impl Iterator<Item = Statement<'_>> {
 pub fn loose_sqlparse_with_options(sql: &str, options: Options) -> impl Iterator<Item = Statement<'_>> {
     Tokenizer::new(sql, options)
 }
+
+/// Alias of {{loose_sqlparse}}.
+pub fn parse(sql: &str) -> impl Iterator<Item = Statement<'_>> {
+    Tokenizer::new(sql, Options::default())
+}
+
+/// Alias of {{loose_sqlparse_with_options}}.
+pub fn parse_with_options(sql: &str, options: Options) -> impl Iterator<Item = Statement<'_>> {
+    Tokenizer::new(sql, options)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_public_api() {
+        let statements: Vec<_> = loose_sqlparse("SELECT /* one */ 1;SELECT 2").collect();
+        assert_eq!(statements[0].tokens().as_str_array(), ["SELECT", "/* one */", "1", ";"]);
+        assert_eq!(statements[1].tokens().as_str_array(), ["SELECT", "2"]);
+
+        let statements: Vec<_> = parse("SELECT /* one */ 1;SELECT 2").collect();
+        assert_eq!(statements[0].tokens().as_str_array(), ["SELECT", "/* one */", "1", ";"]);
+        assert_eq!(statements[1].tokens().as_str_array(), ["SELECT", "2"]);
+
+        let options = Options { statement_delimiter: "\\".to_string() };
+        let statements: Vec<_> = loose_sqlparse_with_options("SELECT /* one */ 1\\SELECT 2", options).collect();
+        assert_eq!(statements[0].tokens().as_str_array(), ["SELECT", "/* one */", "1", "\\"]);
+        assert_eq!(statements[1].tokens().as_str_array(), ["SELECT", "2"]);
+
+        let options = Options { statement_delimiter: "\\".to_string() };
+        let statements: Vec<_> = parse_with_options("SELECT /* one */ 1\\SELECT 2", options).collect();
+        assert_eq!(statements[0].tokens().as_str_array(), ["SELECT", "/* one */", "1", "\\"]);
+        assert_eq!(statements[1].tokens().as_str_array(), ["SELECT", "2"]);
+    }
+
+    #[test]
+    fn test_loose_sqlparse_with_options() {}
+}
