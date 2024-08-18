@@ -9,6 +9,8 @@ function codecov() {
   export RUSTFLAGS=-Cinstrument-coverage
   export RUSTDOCFLAGS=-Cinstrument-coverage
 
+  clean_codecov
+
   cargo test && \
   grcov $(find . -name "rsql-*.profraw" -print) \
     -s . \
@@ -18,7 +20,6 @@ function codecov() {
     --ignore='examples/*' \
     --ignore='/*' \
     --binary-path ./target/debug/ \
-    --excl-line='#\[derive' \
     -t html \
     -o ./target/coverage/
 
@@ -43,14 +44,19 @@ function codecov() {
   unset RUSTDOCFLAGS
 }
 
-# -----------------------------------------------------------------------------
-# Clean code coverage and cargo files & reset the environment
-# -----------------------------------------------------------------------------
-function clean() {
+function clean_codecov {
   local profile_files=($(find . -name "rsql-*.profraw" -print))
   for file in "${profile_files[@]}"; do
     rm $file
   done
   [ -f "lcov.info" ] && rm lcov.info
+  rm -rf ./target/coverage
+}
+
+# -----------------------------------------------------------------------------
+# Clean code coverage and cargo files & reset the environment
+# -----------------------------------------------------------------------------
+function clean() {
+  clean_codecov
   cargo clean
 }

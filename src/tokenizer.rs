@@ -77,8 +77,6 @@ impl<'s> Tokenizer<'s> {
     }
 
     // Move an iterator n characters forward.
-    //
-    // WARNING: That function is not safe to use if new lines are skipped.
     #[inline]
     fn forward_iter(&mut self, input_iter: &mut std::str::Chars, n: usize) {
         let mut n = n;
@@ -215,8 +213,7 @@ impl<'s> Tokenizer<'s> {
                         break;
                     }
                 } else {
-                    // We need to go back immediately to the beginning of the loop to check if the next character we've
-                    // just read from the input.
+                    // back to the main loop to process the character we've just read from the input.
                     continue;
                 }
             } else if c == '/' {
@@ -225,8 +222,7 @@ impl<'s> Tokenizer<'s> {
                 if next_char.as_ref() == Some(&'*') {
                     nested_level += 1;
                 } else {
-                    // We need to go back immediately to the beginning of the loop to check if the next character we've
-                    // just read from the input.
+                    // back to the main loop to process the character we've just read from the input.
                     continue;
                 }
             } else {
@@ -569,6 +565,7 @@ impl<'s> Tokenizer<'s> {
             next_char = self.get_next_char(input_iter);
         }
         // We reached the end of the input without finding the end of the token...
+        self.capture_token(tokens, self.next_offset, self.next_offset, value_constructor);
         next_char
     }
 
@@ -799,9 +796,12 @@ mod tests {
         assert_token!("0xFFFF_FFFF", NumericConstant);
         assert_token!("1.618_034", NumericConstant);
 
-        // The tokenizer should not capture the +/- as part of the numeric constant if not part of the exponential
-        // notation.
+        // Should not capture the +/- as part of the numeric constant if not part of the exponential notation.
         assert_tokens!("1.925e-3+1 1.925-3 1.925+3", ["1.925e-3", "+", "1", "1.925", "-", "3", "1.925", "+", "3"]);
+
+        // Should break invalid numeric constants.
+        assert_tokens!("0xg", ["0x", "g"]);
+        assert_tokens!("1.9eg", ["1.9e", "g"]);
     }
 
     #[test]
@@ -855,11 +855,14 @@ mod tests {
         assert_token!("$$O'Reilly$$", QuotedIdentifierOrConstant);
         assert_token!("$tag$with_tag$tag$", QuotedIdentifierOrConstant);
         assert_token!("$x$__$__$x$", QuotedIdentifierOrConstant);
+        assert_tokens!("$$O'Reilly", ["$$O'Reilly"]);
     }
 
     #[test]
     fn test_comment_token() {
         // multi-line comment
+        assert_token!("/* / */", Comment);
+        assert_token!("/** comment **/", Comment);
         assert_token!("/* comment */", Comment);
         assert_token!("/* /*nested*/comment */", Comment);
         assert_token!("/*+ SET_VAR(foreign_key_checks=OFF) */", Comment);
@@ -882,6 +885,7 @@ mod tests {
         assert_token!(r#""ID ""X""""#, QuotedIdentifierOrConstant); // ID "X"
         assert_token!(r#"''''"#, QuotedIdentifierOrConstant); // A single quote, SELECT '''' -> '
         assert_token!(r#"'O''Reilly'"#, QuotedIdentifierOrConstant); // O'Reilly
+        assert_tokens!("'missing ''end quote", ["'missing ''end quote"]);
     }
 
     #[test]
@@ -896,5 +900,15 @@ mod tests {
     fn test_empty_input() {
         let s: Vec<_> = Tokenizer::new("", Options::default()).collect();
         assert_eq!(s.len(), 0);
+        let s: Vec<_> = Tokenizer::new(" \r\n ", Options::default()).collect();
+        assert_eq!(s.len(), 0);
+        let s: Vec<_> = Tokenizer::new("\r\n", Options::default()).collect();
+        assert_eq!(s.len(), 0);
+    }
+
+    #[test]
+    fn test_some_random_syntax_edge_cases() {
+        assert_token!(".", Any);
+        assert_tokens!(".x2", [".", "x2"]);
     }
 }

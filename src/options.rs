@@ -1,3 +1,4 @@
+#[derive(Debug, Clone)]
 /// Parser options.
 pub struct Options {
     /// The delimiter used to separate statements.
