@@ -7,7 +7,6 @@ pub enum TokenValue<'s> {
     Any(&'s str),
     Comment(&'s str),
     QuotedIdentifierOrConstant(&'s str),
-    Delimited(&'s str),
 
     /// A Numeric Constant
     ///
@@ -75,7 +74,6 @@ impl<'s> AsRef<str> for TokenValue<'s> {
             TokenValue::Any(value) => value,
             TokenValue::Comment(value) => value,
             TokenValue::QuotedIdentifierOrConstant(value) => value,
-            TokenValue::Delimited(value) => value,
             TokenValue::Operator(value) => value,
             TokenValue::StatementDelimiter(value) => value,
             TokenValue::NumericConstant(value) => value,
@@ -118,10 +116,6 @@ impl<'s> Token<'s> {
 
     pub fn is_quoted_identifier_or_constant(&self) -> bool {
         matches!(self.value, TokenValue::QuotedIdentifierOrConstant(_))
-    }
-
-    pub fn is_delimited(&self) -> bool {
-        matches!(self.value, TokenValue::Delimited(_))
     }
 
     pub fn is_fragment(&self) -> bool {
@@ -167,7 +161,6 @@ impl<'s> Token<'s> {
             TokenValue::Any(value) => vec![value],
             TokenValue::Comment(value) => vec![value],
             TokenValue::QuotedIdentifierOrConstant(value) => vec![value],
-            TokenValue::Delimited(value) => vec![value],
             TokenValue::StatementDelimiter(value) => vec![value],
             TokenValue::Operator(value) => vec![value],
             TokenValue::NumericConstant(value) => vec![value],

@@ -364,6 +364,16 @@ impl<'s> Tokenizer<'s> {
                 self.forward_iter(input_iter, 1);
                 next_char = self.capture_quoted_identifier_or_constant(input_iter, '\'', tokens);
                 continue;
+            } else if (c == 'B' || c == 'b' || c == 'X' || c == 'x') && self.next_char() == Some('\'') {
+                //
+                //  Bit-String Constants (PostgreSQL: B'1001', X'1FF').
+                //
+                // Because a single quote is not allowed within a bit-string constant, we can safely capture the token
+                // without having to check for escaped quotes.
+                self.forward_iter(input_iter, 1);
+                next_char =
+                    self.capture_delimited_token(input_iter, "'", tokens, TokenValue::QuotedIdentifierOrConstant);
+                continue;
             } else if c == '$' {
                 //
                 // May be dollar quoting (PostgreSQL).
@@ -384,7 +394,12 @@ impl<'s> Tokenizer<'s> {
                 if next_char.as_ref() == Some(&'$') {
                     // We found the end of the dollar-quoted delimiter.
                     let delimiter = &self.input[self.token_start.offset..self.next_offset];
-                    next_char = self.capture_delimited_token(input_iter, delimiter, tokens);
+                    next_char = self.capture_delimited_token(
+                        input_iter,
+                        delimiter,
+                        tokens,
+                        TokenValue::QuotedIdentifierOrConstant,
+                    );
                 }
                 continue;
             } else if c == '(' {
@@ -519,7 +534,7 @@ impl<'s> Tokenizer<'s> {
     // There is no escaping mechanism for delimiters, so if the delimiter is found the token is captured and the next
     // character is returned to the tokenizer.
     //
-    // This is used to capture Dollar-Quoted Strings in PostgreSQL.
+    // - Used to capture Dollar-Quoted Strings in PostgreSQL.
     // See: https://www.postgresql.org/docs/current/sql-syntax-lexical.html#SQL-SYNTAX-DOLLAR-QUOTING
     //
     // Also used to capture more complex SQL constructs like JSON literals in MySQL when using the 'DELIMITER' cli
@@ -527,11 +542,12 @@ impl<'s> Tokenizer<'s> {
     // See: https://dev.mysql.com/doc/refman/8.4/en/stored-programs-defining.html
     //
     // This function will panic if the delimiter is an empty string.
-    fn capture_delimited_token(
+    fn capture_delimited_token<T: Into<TokenValue<'s>>>(
         &mut self,
         input_iter: &mut std::str::Chars,
         delimiter: &str,
         tokens: &mut Tokens<'s>,
+        value_constructor: impl Fn(&'s str) -> T,
     ) -> Option<char> {
         let delimiter_start_char = delimiter.chars().next().expect("delimiter must not be empty");
         let mut next_char = self.get_next_char(input_iter);
@@ -546,7 +562,7 @@ impl<'s> Tokenizer<'s> {
                         tokens,
                         self.offset + delimiter.len(),
                         self.offset + delimiter.len(),
-                        TokenValue::Delimited,
+                        value_constructor,
                     );
                     // We return the next character to the tokenizer so it can be processed.
                     self.forward_iter(input_iter, delimiter.len() - 1);
@@ -715,8 +731,22 @@ mod tests {
     fn test_escaped_or_unicode_string_constant() {
         assert_token!("E''", QuotedIdentifierOrConstant);
         assert_token!("E'hello\\world'", QuotedIdentifierOrConstant);
+        assert_token!("e''", QuotedIdentifierOrConstant);
+        assert_token!("e'hello\\world'", QuotedIdentifierOrConstant);
         assert_token!("N''", QuotedIdentifierOrConstant);
         assert_token!("N'こんにちは'", QuotedIdentifierOrConstant);
+        assert_token!("n''", QuotedIdentifierOrConstant);
+        assert_token!("n'こんにちは'", QuotedIdentifierOrConstant);
+    }
+
+    #[test]
+    fn test_bit_string_constant() {
+        assert_token!("B'100'", QuotedIdentifierOrConstant);
+        assert_token!("B''", QuotedIdentifierOrConstant);
+        assert_token!("b'100'", QuotedIdentifierOrConstant);
+        assert_token!("b''", QuotedIdentifierOrConstant);
+        assert_token!("x'1FF'", QuotedIdentifierOrConstant);
+        assert_token!("x''", QuotedIdentifierOrConstant);
     }
 
     #[test]
@@ -812,9 +842,9 @@ mod tests {
 
     #[test]
     fn test_delimited_token() {
-        assert_token!("$$O'Reilly$$", Delimited);
-        assert_token!("$tag$with_tag$tag$", Delimited);
-        assert_token!("$x$__$__$x$", Delimited);
+        assert_token!("$$O'Reilly$$", QuotedIdentifierOrConstant);
+        assert_token!("$tag$with_tag$tag$", QuotedIdentifierOrConstant);
+        assert_token!("$x$__$__$x$", QuotedIdentifierOrConstant);
     }
 
     #[test]
