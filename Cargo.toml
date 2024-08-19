@@ -1,8 +1,8 @@
 [package]
 name = "loose-sqlparser"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-license = "MIT"
+license = "Apache-2.0 OR MIT"
 repository = "https://github.com/squill-app/loose-sqlparser-rs"
 keywords = [
     "database",
@@ -19,11 +19,35 @@ keywords = [
 categories = ["database"]
 authors = ["Philippe Shampanier <pshampanier@gmail.com>"]
 
-[dev-dependencies]
-terminal_size = "0.3.0"
-criterion = { version = "0.5.1", features = ["html_reports"] }
-sqlparser = "0.50"
+# This package has no dependencies but the following are used to build the examples and benchmarks.
+# They should be in the `dev-dependencies` section but they would be systematically included when running `cargo test`
+# which is not desirable.
+[dependencies]
+criterion = { version = "0.5", optional = true}
+sqlparser = { version = "0.50", optional = true }
+terminal_size = { version = "0.3", optional = true }
 
+[features]
+benchmarks = ["criterion", "sqlparser"]
+examples = ["terminal_size"]
+
+# Benchmarks againts `sqlparser`.
+#
+# To run the benchmarks, use the following command:
+# ```sh
+# cargo bench --features benchmarks -- --quiet
+# ```
 [[bench]]
 name = "sqlparser"
 harness = false
+required-features = ["benchmarks"]
+
+# Example CLI tool.
+#
+# To run the CLI tool, use the following command:
+# ```sh
+# cargo run --features examples --example cli FILENAME.sql
+# ```
+[[example]]
+name = "cli"
+required-features = ["examples"]

@@ -1,5 +1,6 @@
 use crate::{tokens::Tokens, Position, TokenValue};
 
+// A SQL statement.
 #[derive(Debug)]
 pub struct Statement<'s> {
     // The input from which the statement was parsed.

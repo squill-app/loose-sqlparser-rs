@@ -2,10 +2,42 @@ use crate::Position;
 use std::convert::AsRef;
 use std::ops::{Deref, DerefMut};
 
+// A token extracted from the input string.
 #[derive(Debug)]
 pub enum TokenValue<'s> {
+    /// Any token that does not match any of the other variants.
     Any(&'s str),
+
+    /// A comment.
+    ///
+    /// - Single-line comments start with `--` or '#' and continue to the end of the line.
+    /// - Multi-line comments start with `/*` and end with `*/`.
     Comment(&'s str),
+
+    /// A quoted identifier or a non numeric constant.
+    ///
+    /// - *Quoted identifiers* are enclosed in double quotes (`"`). They are identifiers (like a table name, column name,
+    ///   or other object) that might otherwise conflict with SQL syntax rules or keywords.
+    ///
+    ///   ```sql
+    ///   -- "ORDER BY" is a quoted identifier
+    ///   SELECT 1 as "ORDER BY" FROM DUAl;
+    ///   ```
+    ///
+    ///   Notes:
+    ///     - MySQL and MariaDB are also allowing backticks (`` ` ``) and single quotes (`'`) for quoting identifiers.
+    ///     - SQL Server is also allowing square brackets (`[]`) for quoting identifiers.
+    ///
+    /// - *String constants* are enclosed in single quotes (`'`). They are used to represent string literals.
+    ///
+    ///   ```sql
+    ///   -- 'Hello World' is a string constant.
+    ///   SELECT 'Hello World' FROM DUAl;
+    ///   ```
+    ///
+    ///   Notes:
+    ///     - MySQL and MariaDB are also allowing single quotes (`'`) for string literals.
+    ///     - PostgreSQL is also allowing dollar-quoted strings (`$tag$...$tag$`) for string literals.
     QuotedIdentifierOrConstant(&'s str),
 
     /// A Numeric Constant
@@ -61,7 +93,9 @@ pub enum TokenValue<'s> {
     /// - Regular expression operators: `~`, `~*`, `!~`, `!~*`
     Operator(&'s str),
 
-    /// A statement delimiter such as `;`.
+    /// Mark the end of an SQL statement.
+    ///
+    /// The default statement delimiter is a semicolon (`;`), but it can be changed in [`crate::Options`].
     StatementDelimiter(&'s str),
 
     /// A fragment of tokens, typically used for the content of parenthesis.
@@ -132,14 +166,14 @@ impl<'s> Token<'s> {
 
     pub fn is_parenthesis(&self) -> bool {
         match &self.value {
-            TokenValue::Any(value) => value == &"(" || value == &")",
+            TokenValue::Any(value) => *value == "(" || *value == ")",
             _ => false,
         }
     }
 
     pub fn is_comma(&self) -> bool {
         match &self.value {
-            TokenValue::Any(value) => value == &",",
+            TokenValue::Any(value) => *value == ",",
             _ => false,
         }
     }
@@ -221,5 +255,49 @@ impl<'s> Deref for Tokens<'s> {
 impl<'s> DerefMut for Tokens<'s> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+
+    #[test]
+    fn test_helper_functions() {
+        assert!(Token::new(TokenValue::Any("."), Position::new(1, 1, 0), Position::new(1, 1, 1)).is_any());
+        assert!(Token::new(TokenValue::NumericConstant("42"), Position::new(1, 1, 0), Position::new(1, 2, 1))
+            .is_numeric_constant());
+        assert!(Token::new(TokenValue::Comment("--"), Position::new(1, 1, 0), Position::new(1, 3, 2)).is_comment());
+        assert!(Token::new(
+            TokenValue::QuotedIdentifierOrConstant("'Hello'"),
+            Position::new(1, 1, 0),
+            Position::new(1, 8, 7)
+        )
+        .is_quoted_identifier_or_constant());
+        assert!(Token::new(TokenValue::Fragment(Tokens::new()), Position::new(1, 1, 0), Position::new(1, 1, 0))
+            .is_fragment());
+        assert!(Token::new(TokenValue::StatementDelimiter(";"), Position::new(1, 1, 0), Position::new(1, 1, 0))
+            .is_statement_delimiter());
+        assert!(Token::new(TokenValue::Operator("+"), Position::new(1, 1, 0), Position::new(1, 1, 0)).is_operator());
+        assert!(Token::new(TokenValue::Any("("), Position::new(1, 1, 0), Position::new(1, 1, 0)).is_parenthesis());
+        assert!(Token::new(TokenValue::Any(")"), Position::new(1, 1, 0), Position::new(1, 1, 0)).is_parenthesis());
+        assert!(!Token::new(TokenValue::Any("}"), Position::new(1, 1, 0), Position::new(1, 1, 0)).is_parenthesis());
+        assert!(!Token::new(TokenValue::Operator("+"), Position::new(1, 1, 0), Position::new(1, 1, 0)).is_parenthesis());
+        assert!(Token::new(TokenValue::Any(","), Position::new(1, 1, 0), Position::new(1, 1, 0)).is_comma());
+        assert!(!Token::new(TokenValue::Any("."), Position::new(1, 1, 0), Position::new(1, 1, 0)).is_comma());
+        assert!(!Token::new(TokenValue::Operator("+"), Position::new(1, 1, 0), Position::new(1, 1, 0)).is_comma());
+        assert!(Token::new(TokenValue::IdentifierOrKeyword("SELECT"), Position::new(1, 1, 0), Position::new(1, 6, 5))
+            .is_identifier_or_keyword());
+    }
+
+    #[test]
+    fn test_children() {
+        assert!(Token::new(TokenValue::Fragment(Tokens::new()), Position::new(1, 1, 0), Position::new(1, 1, 0))
+            .children()
+            .is_some());
+        assert!(Token::new(TokenValue::Any("SELECT"), Position::new(1, 1, 0), Position::new(1, 6, 5))
+            .children()
+            .is_none());
     }
 }

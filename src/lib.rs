@@ -14,15 +14,24 @@ use tokenizer::Tokenizer;
 
 /// A position in the input string given to the parser.
 ///
+/// A position could be the start or the end of a token. In both case, line and column match the position of the
+/// character in the input string (first or last character of the token). Offset on the other hand differs between
+/// start and end. For the start of a token, the offset is the number of bytes from the start of the input string to the
+/// first character of the token. For the end of a token, the offset is the number of bytes from the start of the input
+/// plus the number of bytes of the token. This basically means that the offset of the end of a token is the offset of
+/// next character after the token, allowing to easily get the token's content with `&input[start.offset..end.offset]`.
+///
 /// # Examples
 ///
 /// ```rust
 /// use loose_sqlparser::loose_sqlparse;
-/// let stmt = loose_sqlparse("SELECT 1;\nSELECT 2;").nth(1).unwrap();
+/// let input = "SELECT 1;\nSELECT 2;";
+/// let stmt = loose_sqlparse(input).nth(1).unwrap();
 /// assert_eq!(stmt.sql(), "SELECT 2;");
 /// assert_eq!(stmt.start().line, 2);
 /// assert_eq!(stmt.start().column, 1);
 /// assert_eq!(stmt.start().offset, 10);
+/// assert_eq!(&input[stmt.tokens()[1].start.offset..stmt.tokens()[1].end.offset], "2");
 /// ```
 #[derive(Debug, Clone)]
 pub struct Position {
@@ -33,8 +42,15 @@ pub struct Position {
     pub column: usize,
 
     /// Offset in the input string (0-based)
-    /// The offset is the number of characters (not bytes) from the start of the first character of the token.
+    /// The offset is the number of bytes (not characters) from the start of the input string.
     pub offset: usize,
+}
+
+impl Position {
+    /// Create a new position.
+    pub fn new(line: usize, column: usize, offset: usize) -> Self {
+        Self { line, column, offset }
+    }
 }
 
 /// Scans a SQL string and returns an iterator over the statements.

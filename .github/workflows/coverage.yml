@@ -38,6 +38,8 @@ jobs:
             --branch \
             --ignore-not-existing \
             --ignore='target/*' \
+            --ignore='examples/*' \
+            --excl-line='#\[derive' \
             --ignore='/*' \
             --binary-path ./target/debug/ \
             --excl-line='#\[derive' \

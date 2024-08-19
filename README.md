@@ -6,7 +6,8 @@
 **loose-sqlparser-rs** is a non-validating SQL parser for RUST. It provides support for parsing and splitting SQL
 statements.
 
-Unlike the excellent [sqlparser](https://crates.io/crates/sqlparser) this library is not trying to build a valid AST but will just tokenize the sql input regardless if the SQL is valid or not.
+Unlike the excellent [sqlparser](https://crates.io/crates/sqlparser) this library is not trying to build a valid AST
+but will just tokenize the sql input regardless if the SQL is valid or not.
 
 ```rust
 let statements: Vec<_> = loose_sqlparser::parse("SELECT /* one */ 1;SELECT 2").collect();
@@ -62,7 +63,7 @@ assert_eq!(statements[1].tokens().as_str_array(), ["SELECT", "2"]);
 - Invalid SQL syntaxes don't stop the tokenization.
 
   ```rust
-  // The missing opening opening parenthesis won't stop the tokenization.
+  // The missing opening parenthesis won't stop the tokenization.
   let statements: Vec<_> = loose_sqlparser::parse("SELECT (1+2)*3) FROM employee").collect();
   assert_eq!(
     statements[0].tokens().as_str_array(),
@@ -88,7 +89,7 @@ assert_eq!(statements[1].tokens().as_str_array(), ["SELECT", "2"]);
       SELECT 1 + 2 /* This is a comment */
     "#).collect();
 
-    // {{Statement::is_query()}} determine if the statement can eventually return a
+    // Statement::is_query() determine if the statement can eventually return a
     // result set:
     assert!(statements[0].is_query());  // SELECT ...
     assert!(!statements[1].is_query()); // SELECT ... INTO ...
@@ -99,13 +100,13 @@ assert_eq!(statements[1].tokens().as_str_array(), ["SELECT", "2"]);
     assert!(statements[6].is_query());  // WITH ... DELETE ... RETURNING ...
     assert!(statements[7].is_query());  // EXPLAIN ...
 
-    // {{Statement::is_empty()}} determine if the statement is empty:
+    // Statement::is_empty() determine if the statement is empty:
     assert_eq!(statements[8].tokens().as_str_array(), [";"]);
     assert!(statements[8].is_empty());
     assert_eq!(statements[9].tokens().as_str_array(), ["/* This an empty statement */", ";"]);
     assert!(statements[9].is_empty());
 
-    // {{Token::is_comment()}} and more token's functions can be used to determine the
+    // Token::is_comment() and more token's functions can be used to determine the
     // type of token:
     assert_eq!(
       statements[10].tokens().as_str_array(),
@@ -125,8 +126,8 @@ assert_eq!(statements[1].tokens().as_str_array(), ["SELECT", "2"]);
 
 You can use the `cli` example to play with the parser and test it capabilities and limitations:
 
-```bash
-$ cargo run --example cli FILENAME.sql
+```sh
+cargo run --features examples --example cli FILENAME.sql
 ```
 
 ## Benchmarks
@@ -136,7 +137,7 @@ $ cargo run --example cli FILENAME.sql
 complex query:
 
 ```sh
-cargo bench -- --quiet
+cargo bench --features benchmarks -- --quiet
 ```
 
 > ```text
