@@ -42,7 +42,6 @@ jobs:
             --excl-line='#\[derive' \
             --ignore='/*' \
             --binary-path ./target/debug/ \
-            --excl-line='#\[derive' \
             -t lcov \
             -o lcov.info
 
