@@ -6,6 +6,7 @@ env:
   RUST_BACKTRACE: 1
   RUST_LOG: "info"
   RUST_LOG_SPAN_EVENTS: full
+  RUSTC_BOOTSTRAP: 1
   RUSTFLAGS: "-Zprofile -Ccodegen-units=1 -Copt-level=0 -Clink-dead-code -Coverflow-checks=off -Zpanic_abort_tests"
   RUSTDOCFLAGS: "-Cpanic=abort"
   CARGO_INCREMENTAL: 0
