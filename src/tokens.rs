@@ -98,6 +98,19 @@ pub enum TokenValue<'s> {
     /// The default statement delimiter is a semicolon (`;`), but it can be changed in [`crate::Options`].
     StatementDelimiter(&'s str),
 
+    /// Parameter Marker
+    ///
+    /// Parameter markers indicates where data values are to be bound to the query later when executed.
+    ///
+    /// ```sql
+    /// SELECT * FROM users WHERE id = ? AND name = ?;
+    /// ```
+    ///
+    /// - Question Mark (`?`) Syntax: Widely used in databases like SQLite, MySQL, PostgreSQL.
+    /// - Dollar Sign (`$n`) Syntax: PostgreSQL.
+    /// - Named Parameters with (`:`), (`$`) or (`@`) Syntax (ex: `:user_id`, `$user_id`, `@user_id`).
+    ParameterMarker(&'s str),
+
     /// A fragment of tokens, typically used for the content of parenthesis.
     Fragment(Tokens<'s>),
 }
@@ -112,6 +125,7 @@ impl<'s> AsRef<str> for TokenValue<'s> {
             TokenValue::StatementDelimiter(value) => value,
             TokenValue::NumericConstant(value) => value,
             TokenValue::IdentifierOrKeyword(value) => value,
+            TokenValue::ParameterMarker(value) => value,
             TokenValue::Fragment(_) => {
                 panic!("TokenValue::Fragment does not contain a single &str")
             }
@@ -182,6 +196,10 @@ impl<'s> Token<'s> {
         matches!(self.value, TokenValue::IdentifierOrKeyword(_))
     }
 
+    pub fn is_parameter_marker(&self) -> bool {
+        matches!(self.value, TokenValue::ParameterMarker(_))
+    }
+
     pub fn children(&self) -> Option<&Tokens<'s>> {
         match &self.value {
             TokenValue::Fragment(tokens) => Some(tokens),
@@ -199,6 +217,7 @@ impl<'s> Token<'s> {
             TokenValue::Operator(value) => vec![value],
             TokenValue::NumericConstant(value) => vec![value],
             TokenValue::IdentifierOrKeyword(value) => vec![value],
+            TokenValue::ParameterMarker(value) => vec![value],
             TokenValue::Fragment(tokens) => tokens.iter().flat_map(|t| t.as_str_array()).collect(),
         }
     }
@@ -289,6 +308,8 @@ mod tests {
         assert!(!Token::new(TokenValue::Operator("+"), Position::new(1, 1, 0), Position::new(1, 1, 0)).is_comma());
         assert!(Token::new(TokenValue::IdentifierOrKeyword("SELECT"), Position::new(1, 1, 0), Position::new(1, 6, 5))
             .is_identifier_or_keyword());
+        assert!(Token::new(TokenValue::ParameterMarker("?"), Position::new(1, 1, 0), Position::new(1, 1, 0))
+            .is_parameter_marker());
     }
 
     #[test]

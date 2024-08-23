@@ -260,7 +260,7 @@ impl<'s> Tokenizer<'s> {
                     self.capture_token(
                         tokens,
                         if next_char.is_some() { self.offset } else { self.next_offset },
-                        self.next_offset,
+                        if next_char.is_some() { self.offset } else { self.next_offset },
                         TokenValue::QuotedIdentifierOrConstant,
                     );
                     return next_char;
@@ -376,7 +376,7 @@ impl<'s> Tokenizer<'s> {
                 // - The tag consists of letters (A-Z, a-z), digits (0-9), and underscores (_).
                 next_char = self.get_next_char(input_iter);
                 while next_char.is_some()
-                    && (next_char.as_ref().unwrap().is_alphanumeric() || next_char.as_ref() == Some(&'_'))
+                    && (next_char.as_ref().unwrap().is_ascii_alphanumeric() || next_char.as_ref() == Some(&'_'))
                 {
                     next_char = self.get_next_char(input_iter);
                 }
@@ -389,8 +389,39 @@ impl<'s> Tokenizer<'s> {
                         tokens,
                         TokenValue::QuotedIdentifierOrConstant,
                     );
+                } else {
+                    // We've found a parameter marker (`$1`, `$id`)
+                    self.capture_token(
+                        tokens,
+                        if next_char.is_some() { self.offset } else { self.next_offset },
+                        self.next_offset,
+                        TokenValue::ParameterMarker,
+                    );
                 }
                 continue;
+            } else if c == ':' || c == '?' || c == '@' {
+                //
+                // A Parameter Marker
+                //
+                next_char = self.get_next_char(input_iter);
+                while next_char.is_some()
+                    && (next_char.as_ref().unwrap().is_ascii_alphanumeric() || next_char.as_ref() == Some(&'_'))
+                {
+                    next_char = self.get_next_char(input_iter);
+                }
+                if c == ':' && next_char.as_ref() == Some(&':') && self.token_start.offset + 1 == self.offset {
+                    // Special case for the PostgreSQL type casting operator `::` (consuming next_char).
+                    self.capture_token(tokens, self.next_offset, self.next_offset, TokenValue::Operator);
+                } else {
+                    // We've found a parameter marker (`$1`, `$id`)
+                    self.capture_token(
+                        tokens,
+                        if next_char.is_some() { self.offset } else { self.next_offset },
+                        self.next_offset,
+                        TokenValue::ParameterMarker,
+                    );
+                    continue;
+                }
             } else if c == '(' {
                 //
                 // Start of a parentheses block.
@@ -810,6 +841,33 @@ mod tests {
     }
 
     #[test]
+    fn test_parameter_marker_token() {
+        assert_token!("?", ParameterMarker);
+        assert_token!("$1", ParameterMarker);
+        assert_token!(":username", ParameterMarker);
+        assert_token!("$username", ParameterMarker);
+        assert_token!("@username", ParameterMarker);
+        assert_tokens!("id = ? AND name = ?", ["id", "=", "?", "AND", "name", "=", "?"]);
+        assert_tokens!(
+            "id = ? AND name = '_prefix'||?||'_suffix'",
+            ["id", "=", "?", "AND", "name", "=", "'_prefix'", "||", "?", "||", "'_suffix'"]
+        );
+        assert_tokens!("id = $1 AND name = $2", ["id", "=", "$1", "AND", "name", "=", "$2"]);
+        assert_tokens!(
+            "id = :user_id AND name = :user_name",
+            ["id", "=", ":user_id", "AND", "name", "=", ":user_name"]
+        );
+        assert_tokens!(
+            "id = @user_id AND name = @user_name",
+            ["id", "=", "@user_id", "AND", "name", "=", "@user_name"]
+        );
+        assert_tokens!(
+            "id = $user_id AND name = $user_name",
+            ["id", "=", "$user_id", "AND", "name", "=", "$user_name"]
+        );
+    }
+
+    #[test]
     fn test_operator_token() {
         assert_token!("!~*", Operator);
         assert_token!("!=", Operator);
@@ -839,6 +897,7 @@ mod tests {
             "1 + 2+3 -4-5 * 6*7 / 8/9",
             ["1", "+", "2", "+", "3", "-", "4", "-", "5", "*", "6", "*", "7", "/", "8", "/", "9"]
         );
+        assert_tokens!("123::TEXT '2024-08-22'::DATE", ["123", "::", "TEXT", "'2024-08-22'", "::", "DATE"]);
     }
 
     #[test]
@@ -886,6 +945,8 @@ mod tests {
         assert_token!(r#"''''"#, QuotedIdentifierOrConstant); // A single quote, SELECT '''' -> '
         assert_token!(r#"'O''Reilly'"#, QuotedIdentifierOrConstant); // O'Reilly
         assert_tokens!("'missing ''end quote", ["'missing ''end quote"]);
+        // string constant followed by a CAST identifier (PostgreSQL).
+        assert_tokens!("'2024-08-22'::DATE", ["'2024-08-22'", "::", "DATE"]);
     }
 
     #[test]
