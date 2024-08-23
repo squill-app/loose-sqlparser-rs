@@ -6,19 +6,24 @@ function codecov() {
   export RUST_BACKTRACE=1
   export RUST_LOG="info"
   export RUST_LOG_SPAN_EVENTS=full
-  export RUSTFLAGS=-Cinstrument-coverage
   export RUSTDOCFLAGS=-Cinstrument-coverage
+  export CARGO_INCREMENTAL=0
+  export RUSTC_BOOTSTRAP=1
+  export RUSTFLAGS="-Zprofile -Ccodegen-units=1 -Copt-level=0 -Clink-dead-code -Coverflow-checks=off -Zpanic_abort_tests"
+  export RUSTDOCFLAGS=-Cpanic=abort
 
   clean_codecov
 
+  cargo build && \
   cargo test && \
-  grcov $(find . -name "rsql-*.profraw" -print) \
+  grcov . \
     -s . \
     --branch \
     --ignore-not-existing \
     --ignore='target/*' \
     --ignore='examples/*' \
     --ignore='/*' \
+    --excl-line='#\[derive' \
     --binary-path ./target/debug/ \
     -t html \
     -o ./target/coverage/
@@ -42,6 +47,7 @@ function codecov() {
   unset RUST_LOG_SPAN_EVENTS
   unset RUSTFLAGS
   unset RUSTDOCFLAGS
+  unset RUSTC_BOOTSTRAP
 }
 
 function clean_codecov {
