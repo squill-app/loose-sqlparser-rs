@@ -1,7 +1,9 @@
 > A simple loose SQL parser for RUST
 
+[<img alt="github" src="https://img.shields.io/badge/github-loose--sqlparser--rs-8da0cb?style=for-the-badge&labelColor=555555&logo=github">](https://github.com/squill-app/loose-sqlparser-rs)
 [![build](https://img.shields.io/github/actions/workflow/status/squill-app/loose-sqlparser-rs/coverage.yml?style=for-the-badge)](https://github.com/squill-app/loose-sqlparser-rs/actions/workflows/coverage.yml)
 [![codecov](https://img.shields.io/codecov/c/gh/squill-app/loose-sqlparser-rs/settings/badge.svg?token=PD2KZWGW8U&style=for-the-badge&logo=codecov)](https://codecov.io/github/squill-app/loose-sqlparser-rs)
+[<img alt="crates.io" src="https://img.shields.io/crates/v/loose-sqlparser-rs.svg?style=for-the-badge&color=fc8d62&logo=rust">](https://crates.io/crates/loose-sqlparser-rs)
 
 **loose-sqlparser-rs** is a non-validating SQL parser for RUST. It provides support for parsing and splitting SQL
 statements.
