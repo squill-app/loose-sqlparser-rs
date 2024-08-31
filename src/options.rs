@@ -1,3 +1,7 @@
+#[cfg(feature = "serialize")]
+use serde::Deserialize;
+
+#[cfg_attr(feature = "serialize", derive(Deserialize))]
 #[derive(Debug, Clone)]
 /// Parser options.
 pub struct Options {

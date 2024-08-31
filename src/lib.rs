@@ -1,5 +1,8 @@
 #![doc = include_str!("../README.md")]
 
+#[cfg(feature = "serialize")]
+use serde::Serialize;
+
 mod options;
 mod statement;
 mod tokenizer;
@@ -34,6 +37,7 @@ use tokenizer::Tokenizer;
 /// assert_eq!(&input[stmt.tokens()[1].start.offset..stmt.tokens()[1].end.offset], "2");
 /// ```
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
 pub struct Position {
     /// Line number (1-based).
     pub line: usize,
@@ -110,4 +114,15 @@ mod tests {
 
     #[test]
     fn test_loose_sqlparse_with_options() {}
+
+    #[test]
+    #[cfg(feature = "serialize")]
+    fn test_serialization() {
+        let statements: Vec<_> = loose_sqlparse("SELECT /* one */ 1; SELECT (2+1)").collect();
+        let json = serde_json::to_string(&statements).unwrap();
+        assert_eq!(
+            json,
+            r#"[{"input":"SELECT /* one */ 1; SELECT (2+1)","tokens":[{"type":"IdentifierOrKeyword","value":"SELECT","start":{"line":1,"column":1,"offset":0},"end":{"line":1,"column":6,"offset":6}},{"type":"Comment","value":"/* one */","start":{"line":1,"column":8,"offset":7},"end":{"line":1,"column":16,"offset":16}},{"type":"NumericConstant","value":"1","start":{"line":1,"column":18,"offset":17},"end":{"line":1,"column":18,"offset":18}},{"type":"StatementDelimiter","value":";","start":{"line":1,"column":19,"offset":18},"end":{"line":1,"column":19,"offset":19}}]},{"input":"SELECT /* one */ 1; SELECT (2+1)","tokens":[{"type":"IdentifierOrKeyword","value":"SELECT","start":{"line":1,"column":21,"offset":20},"end":{"line":1,"column":26,"offset":26}},{"type":"Any","value":"(","start":{"line":1,"column":28,"offset":27},"end":{"line":1,"column":28,"offset":28}},{"type":"Fragment","value":[{"type":"NumericConstant","value":"2","start":{"line":1,"column":29,"offset":28},"end":{"line":1,"column":29,"offset":29}},{"type":"Operator","value":"+","start":{"line":1,"column":30,"offset":29},"end":{"line":1,"column":30,"offset":30}},{"type":"NumericConstant","value":"1","start":{"line":1,"column":31,"offset":30},"end":{"line":1,"column":31,"offset":31}}],"start":{"line":1,"column":32,"offset":31},"end":{"line":1,"column":31,"offset":31}},{"type":"Any","value":")","start":{"line":1,"column":32,"offset":31},"end":{"line":1,"column":32,"offset":32}}]}]"#
+        );
+    }
 }

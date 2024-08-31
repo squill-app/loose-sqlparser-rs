@@ -1,7 +1,11 @@
 use crate::{tokens::Tokens, Position, TokenValue};
 
+#[cfg(feature = "serialize")]
+use serde::Serialize;
+
 // A SQL statement.
 #[derive(Debug)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
 pub struct Statement<'s> {
     // The input from which the statement was parsed.
     pub(crate) input: &'s str,

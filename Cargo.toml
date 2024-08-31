@@ -26,10 +26,17 @@ authors = ["Philippe Shampanier <pshampanier@gmail.com>"]
 criterion = { version = "0.5", optional = true}
 sqlparser = { version = "0.50", optional = true }
 terminal_size = { version = "0.3", optional = true }
+serde = { version = "1.0", features = ["derive"], optional = true }
+serde_json = { version = "1.0", optional = true }
 
+# `benchmarks` and `examples` features are only used to build the examples and benchmarks. They are allowing to avoid
+# a systematic inclusion of the dependencies when running `cargo test` which would increase the build time.
+#
+# `serialize` is used to serialize the AST to JSON by the `loose-sqlparser-wasm` crate.
 [features]
 benchmarks = ["criterion", "sqlparser"]
 examples = ["terminal_size"]
+serialize = ["serde", "serde_json"]
 
 # Benchmarks againts `sqlparser`.
 #

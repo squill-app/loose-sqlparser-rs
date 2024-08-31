@@ -262,6 +262,8 @@ name = "loose-sqlparser"
 version = "0.2.0"
 dependencies = [
  "criterion",
+ "serde",
+ "serde_json",
  "sqlparser",
  "terminal_size",
 ]

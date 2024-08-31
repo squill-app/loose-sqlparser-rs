@@ -2,6 +2,9 @@ use crate::Position;
 use std::convert::AsRef;
 use std::ops::{Deref, DerefMut};
 
+#[cfg(feature = "serialize")]
+use serde::{ser::SerializeStruct, Serialize, Serializer};
+
 // A token extracted from the input string.
 #[derive(Debug)]
 pub enum TokenValue<'s> {
@@ -237,8 +240,44 @@ impl std::fmt::Display for Token<'_> {
     }
 }
 
+#[cfg(feature = "serialize")]
+macro_rules! ser_token_value {
+    ($state:expr, $variant:ident, $value:expr) => {{
+        $state.serialize_field("type", stringify!($variant))?;
+        $state.serialize_field("value", $value)?;
+    }};
+}
+
+#[cfg(feature = "serialize")]
+impl<'s> Serialize for Token<'s> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_struct("Token", 4)?;
+        match &self.value {
+            TokenValue::Any(value) => ser_token_value!(state, Any, value),
+            TokenValue::Comment(value) => ser_token_value!(state, Comment, value),
+            TokenValue::QuotedIdentifierOrConstant(value) => ser_token_value!(state, QuotedIdentifierOrConstant, value),
+            TokenValue::Operator(value) => ser_token_value!(state, Operator, value),
+            TokenValue::StatementDelimiter(value) => ser_token_value!(state, StatementDelimiter, value),
+            TokenValue::NumericConstant(value) => ser_token_value!(state, NumericConstant, value),
+            TokenValue::IdentifierOrKeyword(value) => ser_token_value!(state, IdentifierOrKeyword, value),
+            TokenValue::ParameterMarker(value) => ser_token_value!(state, ParameterMarker, value),
+            TokenValue::Fragment(tokens) => {
+                state.serialize_field("type", "Fragment")?;
+                state.serialize_field("value", &tokens)?;
+            }
+        }
+        state.serialize_field("start", &self.start)?;
+        state.serialize_field("end", &self.end)?;
+        state.end()
+    }
+}
+
 /// A collection of tokens.
 #[derive(Debug, Default)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
 pub struct Tokens<'s>(Vec<Token<'s>>);
 
 impl<'s> Tokens<'s> {
