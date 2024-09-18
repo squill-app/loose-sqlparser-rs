@@ -54,8 +54,9 @@ impl Statement<'_> {
         self.tokens.iter().all(|t| t.is_comment() || t.is_statement_delimiter())
     }
 
-    /// Returns whether the statement is a query or a command.
+    /// Returns whether the statement may return rows.
     ///
+    /// Used to categorize statements that return rows versus those that don't return rows.
     /// The following SQL statements are considered queries:
     /// - SELECT ... (excluding SELECT INTO)
     /// - SHOW ...
@@ -66,6 +67,8 @@ impl Statement<'_> {
     /// - LIST ...
     /// - PRAGMA ...
     /// - INSERT|UPDATE|DELETE ... RETURNING ...
+    ///
+    /// This function is a heuristic and may not be accurate in all cases.
     pub fn is_query(&self) -> bool {
         let keywords = self.keywords();
         if keywords.is_empty() {
